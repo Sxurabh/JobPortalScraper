@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "job-portal-scraper"
+version = "0.1.0"
+description = "Monitor company career portals and send new-job alerts to Telegram."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = ["requests>=2.31,<3", "beautifulsoup4>=4.12,<5", "Flask>=3.0,<4"]
+
+[project.optional-dependencies]
+browser = ["playwright>=1.45,<2"]
+dev = ["pytest>=8,<9"]
+
+[project.scripts]
+job-scraper = "job_scraper.cli:main"
+job-scraper-dashboard = "job_scraper.desktop:main"
+
+[tool.setuptools.packages.find]
+include = ["job_scraper*"]
+
+[tool.setuptools.package-data]
+job_scraper = ["templates/*.html", "static/*"]
