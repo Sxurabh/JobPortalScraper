@@ -6,13 +6,19 @@ Monitor company career pages and send Telegram alerts when new matching jobs app
 
 Python 3.10 or newer is required.
 
-```powershell
-py -m venv .venv
-.venv\Scripts\Activate.ps1
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
 python -m pip install -e .
 ```
 
-After setup, double-click **Start Career Radar.bat** in the project folder. It opens the dashboard in your browser; leave the app running while you want monitoring. The app runs in the background without a terminal window. Choose **Quit dashboard** in the sidebar to stop it. Logs are written to `logs/job-scraper.log`.
+After setup, start the dashboard from the project folder:
+
+```bash
+python start_dashboard.py
+```
+
+It opens the dashboard in your browser. Leave this Terminal window running while you want monitoring. Choose **Quit dashboard** in the sidebar to stop it. Logs are written to `logs/job-scraper.log`.
 
 The dashboard is available at [http://127.0.0.1:8765](http://127.0.0.1:8765) and is bound to this computer only. Use **Add a company** to manage career pages and optional role and location filters. On the overview, choose **Start monitoring** to run scans every 30 minutes, or use **Scan now** for a one-off check. The first scan silently records current listings; later scans alert Telegram for new matching jobs. Use **Settings** to enter your Telegram bot token and channel/chat ID, select an interval, and send a test message.
 
@@ -20,23 +26,23 @@ Company settings continue to be saved in `companies.json`; job and scan history 
 
 Optional browser fallback for career sites rendered by JavaScript:
 
-```powershell
+```bash
 python -m pip install -e ".[browser]"
 python -m playwright install chromium
 ```
 
 Create a Telegram bot with BotFather, add it to your channel or group, and grant permission to post. Set the bot token and destination ID before running the scraper:
 
-```powershell
-$env:TELEGRAM_BOT_TOKEN = "your_bot_token"
-$env:TELEGRAM_CHAT_ID = "@your_channel_or_chat_id"
+```bash
+export TELEGRAM_BOT_TOKEN="your_bot_token"
+export TELEGRAM_CHAT_ID="@your_channel_or_chat_id"
 ```
 
-For a private channel, use its numeric chat ID (often beginning with `-100`). Keep the bot token private. `.env.example` lists the required variable names; the application reads environment variables and does not load `.env` automatically.
+For a private channel, use its numeric chat ID (often beginning with `-100`). Keep the bot token private. The application reads environment variables and does not load `.env` automatically.
 
 ## Add companies
 
-```powershell
+```bash
 job-scraper company add "Acme" "https://boards.greenhouse.io/acme" --keyword engineer --location remote
 job-scraper company add "Example Corp" "https://example.wd5.myworkdayjobs.com/en-US/External"
 job-scraper company list
@@ -62,13 +68,13 @@ The config file is loaded into the SQLite database when a command runs. The defa
 
 Run a single scan to check setup:
 
-```powershell
+```bash
 job-scraper scan
 ```
 
 Start continuous monitoring; it scans immediately and then every 30 minutes:
 
-```powershell
+```bash
 job-scraper run
 ```
 
@@ -84,7 +90,7 @@ Career pages vary and may change their layout or block automated requests. Check
 
 ## Tests
 
-```powershell
+```bash
 python -m pip install -e ".[dev]"
 python -m pytest
 ```
