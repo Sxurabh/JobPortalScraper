@@ -14,10 +14,17 @@ class JobService:
         self.scraper = scraper or PortalScraper()
         self.notifier = notifier or TelegramNotifier()
 
-    def scan_once(self):
-        for company in self.storage.companies():
+    def scan_once(self, on_progress=None):
+        companies = self.storage.companies()
+        total = len(companies)
+        if on_progress:
+            on_progress(0, total, "")
+        for index, company in enumerate(companies, start=1):
+            if on_progress:
+                on_progress(index - 1, total, company.name)
             try:
-                jobs = self.scraper.fetch(company.url)
+                fetch_company = getattr(self.scraper, "fetch_company", None)
+                jobs = fetch_company(company) if fetch_company else self.scraper.fetch(company.url)
                 if not self.storage.baseline_done(company.name):
                     self.storage.save_baseline(company, jobs)
                     LOG.info("Baselined %d existing jobs for %s", len(jobs), company.name)
@@ -28,6 +35,9 @@ class JobService:
             except Exception as exc:
                 self.storage.record_scan(company.name, "error", 0, str(exc))
                 LOG.exception("Scan failed for %s (%s)", company.name, company.url)
+            finally:
+                if on_progress:
+                    on_progress(index, total, company.name)
         self._deliver_pending()
 
     def _deliver_pending(self):

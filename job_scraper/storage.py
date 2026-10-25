@@ -1,7 +1,9 @@
 import json
+import re
 import sqlite3
 import threading
 from pathlib import Path
+from urllib.parse import urlparse
 
 from .models import Company, Job
 
@@ -53,6 +55,12 @@ class Storage:
         if "discovered_at" not in job_columns:
             self.db.execute("ALTER TABLE jobs ADD COLUMN discovered_at TEXT NOT NULL DEFAULT ''")
             self.db.execute("UPDATE jobs SET discovered_at=CURRENT_TIMESTAMP WHERE discovered_at=''")
+        for column, declaration in {
+            "application_status": "TEXT NOT NULL DEFAULT 'new'",
+            "application_notes": "TEXT NOT NULL DEFAULT ''",
+        }.items():
+            if column not in job_columns:
+                self.db.execute(f"ALTER TABLE jobs ADD COLUMN {column} {declaration}")
         self.db.commit()
 
     def close(self):
@@ -95,10 +103,54 @@ class Storage:
         with self.lock, self.db:
             for job in jobs:
                 status = "pending" if company.matches(job) else "suppressed"
+                self._update_existing_workday_url(company.name, job, status)
                 self.db.execute(
                     "INSERT OR IGNORE INTO jobs(company_name,url,title,location,description,notification_status) VALUES(?,?,?,?,?,?)",
                     (company.name, job.url, job.title, job.location, job.description, status),
                 )
+
+    def _update_existing_workday_url(self, company_name: str, job: Job, status: str):
+        requisition_id = _workday_requisition_id(job.url)
+        if not requisition_id:
+            return
+        rows = self.db.execute(
+            "SELECT url,notification_status FROM jobs WHERE company_name=? COLLATE NOCASE",
+            (company_name,),
+        ).fetchall()
+        prior = next(
+            (row for row in rows if row["url"] != job.url and _workday_requisition_id(row["url"]) == requisition_id),
+            None,
+        )
+        if not prior:
+            return
+        current = self.db.execute(
+            "SELECT notification_status,application_status,application_notes FROM jobs WHERE company_name=? COLLATE NOCASE AND url=?",
+            (company_name, job.url),
+        ).fetchone()
+        if current:
+            old_status = prior["notification_status"]
+            merged_status = "sent" if "sent" in {old_status, current["notification_status"]} else (
+                "pending" if "pending" in {old_status, current["notification_status"]} else status
+            )
+            prior_tracking = self.db.execute(
+                "SELECT application_status,application_notes FROM jobs WHERE company_name=? COLLATE NOCASE AND url=?",
+                (company_name, prior["url"]),
+            ).fetchone()
+            tracking_status = current["application_status"] if current["application_status"] != "new" else prior_tracking["application_status"]
+            tracking_notes = current["application_notes"] or prior_tracking["application_notes"]
+            self.db.execute(
+                "UPDATE jobs SET notification_status=?,application_status=?,application_notes=? WHERE company_name=? COLLATE NOCASE AND url=?",
+                (merged_status, tracking_status, tracking_notes, company_name, job.url),
+            )
+            self.db.execute(
+                "DELETE FROM jobs WHERE company_name=? COLLATE NOCASE AND url=?",
+                (company_name, prior["url"]),
+            )
+        else:
+            self.db.execute(
+                "UPDATE jobs SET url=?,title=?,location=?,description=? WHERE company_name=? COLLATE NOCASE AND url=?",
+                (job.url, job.title, job.location, job.description, company_name, prior["url"]),
+            )
 
     def pending(self):
         with self.lock:
@@ -127,7 +179,7 @@ class Storage:
     def recent_jobs(self, limit: int = 1000, scope: str = "matching") -> list[dict]:
         with self.lock:
             rows = self.db.execute(
-                "SELECT j.company_name,j.url,j.title,j.location,j.description,j.notification_status,j.discovered_at "
+            "SELECT j.company_name,j.url,j.title,j.location,j.description,j.notification_status,j.discovered_at,j.application_status,j.application_notes "
                 "FROM jobs j JOIN companies c ON c.name=j.company_name COLLATE NOCASE "
                 "ORDER BY j.rowid DESC",
             ).fetchall()
@@ -150,6 +202,34 @@ class Storage:
                         break
             return matches
 
+    def update_application_tracking(self, company_name: str, url: str, status: str, notes: str) -> bool:
+        allowed = {"new", "interested", "applied", "interviewing", "offer", "rejected", "withdrawn"}
+        if status not in allowed:
+            raise ValueError("Unsupported application status")
+        with self.lock, self.db:
+            cursor = self.db.execute(
+                "UPDATE jobs SET application_status=?,application_notes=? WHERE company_name=? COLLATE NOCASE AND url=?",
+                (status, notes.strip(), company_name, url),
+            )
+            return cursor.rowcount > 0
+
+    def get_job(self, company_name: str, url: str) -> dict | None:
+        with self.lock:
+            row = self.db.execute(
+                "SELECT company_name,url,title,location,description,discovered_at,application_status,application_notes "
+                "FROM jobs WHERE company_name=? COLLATE NOCASE AND url=?",
+                (company_name, url),
+            ).fetchone()
+            return dict(row) if row else None
+
+    def save_job_details(self, company_name: str, url: str, description: str, location: str = ""):
+        with self.lock, self.db:
+            self.db.execute(
+                "UPDATE jobs SET description=CASE WHEN ?<>'' THEN ? ELSE description END,location=CASE WHEN ?<>'' THEN ? ELSE location END "
+                "WHERE company_name=? COLLATE NOCASE AND url=?",
+                (description, description, location, location, company_name, url),
+            )
+
     def dashboard_counts(self) -> dict:
         with self.lock:
             all_jobs = self.db.execute("SELECT COUNT(*) FROM jobs").fetchone()[0]
@@ -159,4 +239,11 @@ class Storage:
                 "all_jobs": all_jobs,
                 "pending": self.db.execute("SELECT COUNT(*) FROM jobs WHERE notification_status='pending'").fetchone()[0],
             }
+
+
+def _workday_requisition_id(url: str) -> str:
+    if "myworkdayjobs.com" not in (urlparse(url).hostname or "").casefold():
+        return ""
+    match = re.search(r"_((?:JR|R)-?[A-Z0-9-]+)$", urlparse(url).path, re.IGNORECASE)
+    return match.group(1).casefold() if match else ""
 

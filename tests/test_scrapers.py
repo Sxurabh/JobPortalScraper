@@ -1,4 +1,4 @@
-from job_scraper.scrapers import PortalScraper, parse_generic_html
+from job_scraper.scrapers import PortalScraper, _parse_statestreet_html, parse_generic_html
 
 
 class FakeResponse:
@@ -93,3 +93,54 @@ def test_workday_uses_public_search_endpoint():
     assert options["json"]["searchText"] == ""
     assert jobs[0].url == "https://acme.wd5.myworkdayjobs.com/job/Analyst_R123"
     assert jobs[0].location == "Toronto, Canada"
+
+
+def test_workday_site_uses_exact_location_facet_for_ssc():
+    api = "https://wd1.myworkdaysite.com/wday/cxs/ssctech/SSCTechnologies/jobs"
+    payload = {
+        "total": 1,
+        "jobPostings": [{
+            "title": "Financial Services Associate",
+            "externalPath": "/job/Pune-India---Commerzone-Building-7/Associate_R123",
+            "locationsText": "Pune India - Commerzone Building 7",
+            "bulletFields": ["R123"],
+        }],
+        "facets": [{
+            "facetParameter": "locationMainGroup",
+            "values": [{
+                "facetParameter": "locations",
+                "values": [{"descriptor": "Pune India - Commerzone Building 7", "id": "pune-commerzone-id", "count": 1}],
+            }],
+        }],
+    }
+    session = FakeSession(payload)
+
+    jobs = PortalScraper(session).fetch(
+        "https://wd1.myworkdaysite.com/en-US/recruiting/ssctech/SSCTechnologies",
+        locations=["Pune India - Commerzone Building 7"],
+    )
+
+    assert len(jobs) == 1
+    assert jobs[0].location == "Pune India - Commerzone Building 7"
+    assert jobs[0].url == "https://wd1.myworkdaysite.com/job/Pune-India---Commerzone-Building-7/Associate_R123"
+    assert session.calls[0][1] == api
+    assert session.calls[1][2]["json"]["appliedFacets"] == {"locations": ["pune-commerzone-id"]}
+
+
+def test_statestreet_parser_extracts_job_card_and_ignores_external_apply_link():
+    page_url = "https://careers.statestreet.com/global/en/search-results?from=0&s=1"
+    html = '''
+    <div class="job-card">
+      <a href="/global/en/job/STSTGLOBALR123EXTERNALENGLOBAL/Analyst">Data Analyst</a>
+      <p>Location Pune Category Other Job Id R-123</p>
+      <p>Analyze investment operations data.</p>
+    </div>
+    <a href="https://statestreet.wd1.myworkdayjobs.com/Global/job/PUNE/Analyst_R-123/apply">Apply Now Data Analyst</a>
+    '''
+
+    jobs = _parse_statestreet_html(html, page_url)
+
+    assert len(jobs) == 1
+    assert jobs[0].title == "Data Analyst"
+    assert jobs[0].location == "Pune"
+    assert jobs[0].url == "https://careers.statestreet.com/global/en/job/STSTGLOBALR123EXTERNALENGLOBAL/Analyst"

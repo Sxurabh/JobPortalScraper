@@ -31,6 +31,8 @@ class MonitorController:
         self.monitoring = False
         self.scanning = False
         self.scan_requested = False
+        self.scan_progress = 0
+        self.scan_company = ""
         self.shutdown = False
         self.last_scan_started = None
         self.last_scan_finished = None
@@ -58,15 +60,19 @@ class MonitorController:
                 if self.shutdown:
                     return
                 self.scanning = True
+                self.scan_progress = 0
+                self.scan_company = ""
                 self.last_scan_started = _utc_now()
                 self.next_scan_at = None
             try:
-                self.service.scan_once()
+                self.service.scan_once(on_progress=self._update_scan_progress)
             except Exception:
                 LOG.exception("Unexpected scan failure")
             finally:
                 with self.condition:
                     self.scanning = False
+                    self.scan_progress = 0
+                    self.scan_company = ""
                     self.last_scan_finished = _utc_now()
                     self.next_due_monotonic = time.monotonic() + self.interval_seconds if self.monitoring else None
                     self.next_scan_at = _utc_after(self.interval_seconds) if self.monitoring else None
@@ -79,6 +85,11 @@ class MonitorController:
                 self.scan_requested = True
             self.next_due_monotonic = time.monotonic() if not self.scanning else self.next_due_monotonic
             self.condition.notify_all()
+
+    def _update_scan_progress(self, completed, total, company_name):
+        with self.condition:
+            self.scan_progress = round(completed * 100 / total) if total else 100
+            self.scan_company = company_name
 
     def pause(self):
         with self.condition:
@@ -117,6 +128,8 @@ class MonitorController:
                 "monitoring": self.monitoring,
                 "scanning": self.scanning,
                 "scan_requested": self.scan_requested,
+                "scan_progress": self.scan_progress,
+                "scan_company": self.scan_company,
                 "interval_seconds": self.interval_seconds,
                 "last_scan_started": self.last_scan_started,
                 "last_scan_finished": self.last_scan_finished,
@@ -177,6 +190,8 @@ def create_app(config_path="companies.json", db_path="jobs.sqlite3", settings_pa
         controller.interval_seconds = interval * 60
         controller.condition = threading.Condition()
         controller.monitoring = controller.scanning = controller.scan_requested = controller.shutdown = False
+        controller.scan_progress = 0
+        controller.scan_company = ""
         controller.last_scan_started = controller.last_scan_finished = controller.next_scan_at = None
         controller.next_due_monotonic = None
         controller.thread = None
@@ -206,7 +221,48 @@ def create_app(config_path="companies.json", db_path="jobs.sqlite3", settings_pa
         scope = request.args.get("scope", "matching")
         if scope not in {"matching", "all"}:
             return jsonify(error="Scope must be 'matching' or 'all'."), 400
-        return jsonify(storage.recent_jobs(scope=scope))
+        try:
+            limit = min(max(int(request.args.get("limit", "1000")), 1), 10000)
+        except ValueError:
+            return jsonify(error="Limit must be a whole number."), 400
+        return jsonify(storage.recent_jobs(limit=limit, scope=scope))
+
+    @app.patch("/api/jobs/tracking")
+    def update_job_tracking():
+        payload = request.get_json(silent=True) or {}
+        company_name = str(payload.get("company_name", "")).strip()
+        url = str(payload.get("url", "")).strip()
+        status = str(payload.get("application_status", "new")).strip().casefold()
+        notes = str(payload.get("application_notes", ""))[:5000]
+        if not company_name or not url.startswith(("https://", "http://")):
+            return jsonify(error="A company and valid job URL are required."), 400
+        try:
+            updated = storage.update_application_tracking(company_name, url, status, notes)
+        except ValueError as exc:
+            return jsonify(error=str(exc)), 400
+        if not updated:
+            return jsonify(error="Job was not found."), 404
+        return jsonify(ok=True)
+
+    @app.get("/api/jobs/details")
+    def job_details():
+        company_name = request.args.get("company", "").strip()
+        url = request.args.get("url", "").strip()
+        job = storage.get_job(company_name, url)
+        if not job:
+            return jsonify(error="Job was not found."), 404
+        details = {"description": job["description"], "location": job["location"]}
+        company = next((item for item in storage.companies() if item.name.casefold() == company_name.casefold()), None)
+        fetch_details = getattr(service.scraper, "fetch_job_details", None)
+        if company and fetch_details:
+            try:
+                full_details = fetch_details(company.url, url)
+                if full_details:
+                    details.update({key: value for key, value in full_details.items() if value})
+                    storage.save_job_details(company_name, url, details["description"], details["location"])
+            except Exception as exc:
+                LOG.info("Could not load full job details for %s (%s)", company_name, type(exc).__name__)
+        return jsonify(details)
 
     @app.get("/api/companies")
     def companies():

@@ -22,6 +22,8 @@ It opens the dashboard in your browser. Leave this Terminal window running while
 
 The dashboard is available at [http://127.0.0.1:8765](http://127.0.0.1:8765) and is bound to this computer only. Use **Add a company** to manage career pages and optional role and location filters. On the overview, choose **Start monitoring** to run scans every 30 minutes, or use **Scan now** for a one-off check. The first scan silently records current listings; later scans alert Telegram for new matching jobs. Use **Settings** to enter your Telegram bot token and channel/chat ID, select an interval, and send a test message.
 
+Open **Details** on a job to review its scraped description and link, track its application status, and save private notes locally. The Job matches page can export its current filtered view as CSV or JSON. Job details, tracking, filters, and exports are laid out for mobile screens; use the theme button in the top bar to switch between light and dark modes.
+
 Company settings continue to be saved in `companies.json`; job and scan history remain in `jobs.sqlite3`. Telegram settings are saved locally in the git-ignored `settings.json`. If you already set Telegram environment variables, the dashboard can use those until you save settings in the UI.
 
 Optional browser fallback for career sites rendered by JavaScript:
@@ -30,6 +32,8 @@ Optional browser fallback for career sites rendered by JavaScript:
 python -m pip install -e ".[browser]"
 python -m playwright install chromium
 ```
+
+State Street and FIS load their search listings with JavaScript, so this browser extra is needed for those integrations. In the dashboard, enter `Pune` in the company's **Locations** field and save it to fetch Pune roles.
 
 Create a Telegram bot with BotFather, add it to your channel or group, and grant permission to post. Set the bot token and destination ID before running the scraper:
 
@@ -45,6 +49,13 @@ For a private channel, use its numeric chat ID (often beginning with `-100`). Ke
 ```bash
 job-scraper company add "Acme" "https://boards.greenhouse.io/acme" --keyword engineer --location remote
 job-scraper company add "Example Corp" "https://example.wd5.myworkdayjobs.com/en-US/External"
+job-scraper company add "Northern Trust" "https://ntrs.wd1.myworkdayjobs.com/northerntrust/"
+job-scraper company add "Apex Group" "https://theapexgroup.wd3.myworkdayjobs.com/apexgroupcareers"
+job-scraper company add "SS&C Technologies" "https://wd1.myworkdaysite.com/en-US/recruiting/ssctech/SSCTechnologies" --location "Pune India - Commerzone Building 7"
+job-scraper company add "State Street" "https://careers.statestreet.com/global/en/" --location Pune
+job-scraper company add "UBS" "https://jobs.ubs.com/TGnewUI/Search/home/HomeWithPreLoad?partnerid=25008&siteid=5012&PageType=searchResults&SearchType=linkquery&LinkID=15602" --location Pune
+job-scraper company add "bp" "https://careers.bp.com/listing" --location Pune
+job-scraper company add "Citi" "https://jobs.citi.com/" --location Pune
 job-scraper company list
 job-scraper company remove "Acme"
 ```
@@ -83,7 +94,12 @@ Change the interval in seconds with `--interval` (for example, `--interval 900` 
 ## Portal support
 
 - Greenhouse URLs use the public boards API. Careers pages with an embedded Greenhouse widget are detected from the page and its site script, even when the company URL itself does not contain `greenhouse.io`.
-- Workday career-site URLs use the site's public job search endpoint.
+- Workday career-site URLs on `myworkdayjobs.com` and `myworkdaysite.com` use the site's public job search endpoint. Configured locations are resolved against Workday's location facets and applied server-side.
+- State Street's Phenom careers site is read from its public, paginated search-results pages. Configure a location such as `--location Pune` to send that city to the site's location search and keep matching city results. The scraper returns job titles, locations, descriptions, and links.
+- FIS Global's Phenom careers site is read from its public, paginated search-results pages. Configure a location such as `--location Pune` to select the matching City facet and keep matching city results.
+- UBS's IBM BrassRing careers page is read from its embedded public search results. Configured locations such as `--location Pune` are applied through the portal's City facet.
+- bp's careers listing is read from its public Algolia search index. Results are paginated, configured locations are applied with the portal's location facets, and full descriptions load from bp's job detail pages.
+- Citi's TalentBrew careers site uses its public paginated search endpoint. Configured locations use Citi's location autocomplete and return only matching city listings; full descriptions load from the job detail page.
 - Other pages are parsed for JobPosting structured data and likely job links. If no static listings are found, installing the optional browser extra enables a Chromium fallback.
 
 Career pages vary and may change their layout or block automated requests. Check logs for a portal that returns no listings or errors. Polling every 30 minutes is the default; respect each site's terms and request limits.
