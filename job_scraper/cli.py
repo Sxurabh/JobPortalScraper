@@ -71,11 +71,12 @@ def main(argv=None):
             else:
                 for company in storage.companies():
                     filters = []
+                    filters.append("included" if company.enabled else "excluded from scans")
                     if company.keywords:
                         filters.append("keywords=" + ",".join(company.keywords))
                     if company.locations:
                         filters.append("locations=" + ",".join(company.locations))
-                    print(f"{company.name}\t{company.url}" + ("\t" + " | ".join(filters) if filters else ""))
+                    print(f"{company.name}\t{company.url}\t" + " | ".join(filters))
             return 0
         service = JobService(storage)
         if args.command == "scan":

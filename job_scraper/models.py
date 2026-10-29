@@ -15,6 +15,7 @@ class Company:
     url: str
     keywords: list[str] = field(default_factory=list)
     locations: list[str] = field(default_factory=list)
+    enabled: bool = True
 
     @classmethod
     def from_dict(cls, data: dict) -> "Company":
@@ -23,10 +24,11 @@ class Company:
             url=str(data["url"]).strip(),
             keywords=[str(value).strip() for value in data.get("keywords", []) if str(value).strip()],
             locations=[str(value).strip() for value in data.get("locations", []) if str(value).strip()],
+            enabled=bool(data.get("enabled", True)),
         )
 
     def to_dict(self) -> dict:
-        return {"name": self.name, "url": self.url, "keywords": self.keywords, "locations": self.locations}
+        return {"name": self.name, "url": self.url, "keywords": self.keywords, "locations": self.locations, "enabled": self.enabled}
 
     def matches(self, job: Job) -> bool:
         text = f"{job.title}\n{job.location}\n{job.description}".casefold()

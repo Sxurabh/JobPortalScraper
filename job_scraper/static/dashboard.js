@@ -180,8 +180,9 @@
     state.companyPage = Math.min(state.companyPage, pageCount);
     const start = (state.companyPage - 1) * pageSize;
     const companies = state.companies.slice(start, start + pageSize);
-    list.innerHTML = companies.map((company) => `<div class="mini-company">${companyLogo(company.name)}<span class="mini-company-name" title="${escapeHtml(company.name)}">${escapeHtml(company.name)}</span>${companyStatus(company)}</div>`).join("");
+    list.innerHTML = companies.map((company) => `<div class="mini-company"><input class="company-scan-toggle" type="checkbox" data-name="${escapeHtml(company.name)}" ${company.enabled ? "checked" : ""} aria-label="Include ${escapeHtml(company.name)} in live scans" title="${company.enabled ? "Included in live scans" : "Excluded from live scans"}">${companyLogo(company.name)}<span class="mini-company-name" title="${escapeHtml(company.name)}">${escapeHtml(company.name)}</span>${companyStatus(company)}</div>`).join("");
     activateCompanyLogos(list);
+    bindCompanyScanToggles(list);
     pagination.hidden = state.companies.length <= pageSize;
     pagination.innerHTML = pagination.hidden ? "" : `<button class="mini-page-button" type="button" data-company-page="${state.companyPage - 1}" aria-label="Previous companies" ${state.companyPage === 1 ? "disabled" : ""}>‹</button><span>${state.companyPage} / ${pageCount}</span><button class="mini-page-button" type="button" data-company-page="${state.companyPage + 1}" aria-label="Next companies" ${state.companyPage === pageCount ? "disabled" : ""}>›</button>`;
   }
@@ -363,7 +364,7 @@
 
   function companyStatus(company) {
     const failed = company.last_scan_status === "error";
-    const status = failed ? "Issue" : company.last_scanned_at ? `${Number(company.last_job_count) || 0} roles` : "Waiting";
+    const status = company.enabled === 0 || company.enabled === false ? "Paused" : failed ? "Issue" : company.last_scanned_at ? `${Number(company.last_job_count) || 0} roles` : "Waiting";
     const title = failed ? ` title="${escapeHtml(company.last_scan_error || "Portal scan failed")}"` : "";
     return `<span class="health-indicator${failed ? " error" : ""}"${title}><i></i>${status}</span>`;
   }
@@ -381,11 +382,34 @@
       try { keywords = JSON.parse(company.keywords || "[]"); } catch {}
       try { locations = JSON.parse(company.locations || "[]"); } catch {}
       const filters = [...keywords.map((item) => `Role · ${item}`), ...locations.map((item) => `Place · ${item}`)];
-      return `<article class="company-card"><div class="company-card-top">${companyLogo(company.name)}<div class="company-card-heading"><h3>${escapeHtml(company.name)}</h3><a class="company-url" href="${escapeHtml(safeHref(company.url))}" title="${escapeHtml(company.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(company.url)}</a></div><div class="company-menu"><button class="icon-text-button edit-company" data-name="${escapeHtml(company.name)}" title="Edit company" aria-label="Edit ${escapeHtml(company.name)}">${icon.edit}</button><button class="icon-text-button delete-company" data-name="${escapeHtml(company.name)}" title="Remove company" aria-label="Remove ${escapeHtml(company.name)}">${icon.trash}</button></div></div><div class="company-card-tags">${filters.length ? filters.map((filter) => `<span class="filter-tag">${escapeHtml(filter)}</span>`).join("") : '<span class="filter-tag">All new roles</span>'}</div><div class="company-card-footer"><span class="company-status${company.last_scan_status === "error" ? " error" : ""}" title="${escapeHtml(company.last_scan_error || "")}"><i></i>${company.last_scan_status === "error" ? "Needs attention" : company.last_scanned_at ? `${Number(company.last_job_count) || 0} current openings` : "First scan pending"}</span><span>${company.last_scanned_at ? `Checked ${escapeHtml(relativeTime(company.last_scanned_at))}` : "Not checked yet"}</span></div></article>`;
+      return `<article class="company-card${company.enabled ? "" : " company-disabled"}"><div class="company-card-top"><input class="company-scan-toggle" type="checkbox" data-name="${escapeHtml(company.name)}" ${company.enabled ? "checked" : ""} aria-label="Include ${escapeHtml(company.name)} in live scans" title="${company.enabled ? "Included in live scans" : "Excluded from live scans"}">${companyLogo(company.name)}<div class="company-card-heading"><h3>${escapeHtml(company.name)}</h3><a class="company-url" href="${escapeHtml(safeHref(company.url))}" title="${escapeHtml(company.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(company.url)}</a></div><div class="company-menu"><button class="icon-text-button edit-company" data-name="${escapeHtml(company.name)}" title="Edit company" aria-label="Edit ${escapeHtml(company.name)}">${icon.edit}</button><button class="icon-text-button delete-company" data-name="${escapeHtml(company.name)}" title="Remove company" aria-label="Remove ${escapeHtml(company.name)}">${icon.trash}</button></div></div><div class="company-card-tags">${filters.length ? filters.map((filter) => `<span class="filter-tag">${escapeHtml(filter)}</span>`).join("") : '<span class="filter-tag">All new roles</span>'}</div><div class="company-card-footer"><span class="company-status${company.last_scan_status === "error" ? " error" : ""}" title="${escapeHtml(company.last_scan_error || "")}"><i></i>${!company.enabled ? "Excluded from scans" : company.last_scan_status === "error" ? "Needs attention" : company.last_scanned_at ? `${Number(company.last_job_count) || 0} current openings` : "First scan pending"}</span><span>${company.last_scanned_at ? `Checked ${escapeHtml(relativeTime(company.last_scanned_at))}` : "Not checked yet"}</span></div></article>`;
     }).join("");
     activateCompanyLogos(grid);
+    bindCompanyScanToggles(grid);
     $$(".edit-company", grid).forEach((button) => button.addEventListener("click", () => openCompanyModal(state.companies.find((company) => company.name === button.dataset.name))));
     $$(".delete-company", grid).forEach((button) => button.addEventListener("click", () => deleteCompany(button.dataset.name)));
+  }
+
+  function bindCompanyScanToggles(root) {
+    $$(".company-scan-toggle", root).forEach((toggle) => toggle.addEventListener("change", async () => {
+      const company = state.companies.find((item) => item.name === toggle.dataset.name);
+      if (!company) return;
+      const enabled = toggle.checked;
+      toggle.disabled = true;
+      let keywords = [], locations = [];
+      try { keywords = JSON.parse(company.keywords || "[]"); } catch {}
+      try { locations = JSON.parse(company.locations || "[]"); } catch {}
+      try {
+        await api("/api/companies", { method: "POST", body: JSON.stringify({ name: company.name, url: company.url, keywords, locations, enabled }) });
+        showToast(`${company.name} ${enabled ? "included in" : "excluded from"} live scans.`);
+        await refresh();
+      } catch (error) {
+        toggle.checked = !enabled;
+        showToast(`Could not update ${company.name}: ${error.message}`, true);
+      } finally {
+        toggle.disabled = false;
+      }
+    }));
   }
 
   function renderStatus() {
@@ -476,6 +500,7 @@
     $("#company-name").readOnly = Boolean(company);
     $("#company-name").classList.toggle("read-only", Boolean(company));
     $("#company-url").value = company?.url || "";
+    $("#company-enabled").checked = company?.enabled !== false;
     let keywords = [], locations = [];
     try { keywords = JSON.parse(company?.keywords || "[]"); } catch {}
     try { locations = JSON.parse(company?.locations || "[]"); } catch {}
@@ -631,7 +656,7 @@
       try {
         const name = $("#company-name").value.trim();
         const wasEditing = Boolean(state.editing);
-        await api("/api/companies", { method: "POST", body: JSON.stringify({ name, url: $("#company-url").value.trim(), keywords: parseList($("#company-keywords").value), locations: parseList($("#company-locations").value) }) });
+        await api("/api/companies", { method: "POST", body: JSON.stringify({ name, url: $("#company-url").value.trim(), keywords: parseList($("#company-keywords").value), locations: parseList($("#company-locations").value), enabled: $("#company-enabled").checked }) });
         closeCompanyModal();
         showToast(wasEditing ? `${name} updated.` : `${name} added to your radar.`);
         await refresh();

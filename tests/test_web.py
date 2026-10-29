@@ -21,10 +21,13 @@ def test_dashboard_company_management_and_private_settings(tmp_path):
         "url": "https://boards.greenhouse.io/acme",
         "keywords": ["engineer", "designer"],
         "locations": ["Remote"],
+        "enabled": False,
     })
     assert created.status_code == 200
     assert client.get("/api/companies").json[0]["name"] == "Acme"
+    assert client.get("/api/companies").json[0]["enabled"] is False
     assert json.loads(config.read_text(encoding="utf-8"))[0]["keywords"] == ["engineer", "designer"]
+    assert json.loads(config.read_text(encoding="utf-8"))[0]["enabled"] is False
 
     invalid = client.post("/api/companies", json={"name": "No URL", "url": "javascript:bad"})
     assert invalid.status_code == 400
@@ -59,7 +62,14 @@ def test_existing_database_is_migrated_without_losing_jobs(tmp_path):
     assert jobs[0]["title"] == "Existing role"
     assert jobs[0]["discovered_at"]
     assert client.get("/api/companies").json[0]["name"] == "Legacy"
+    assert client.get("/api/companies").json[0]["enabled"] is True
     app.config["STORAGE"].close()
+
+
+def test_legacy_company_config_defaults_to_enabled():
+    company = Company.from_dict({"name": "Legacy", "url": "https://example.test/jobs"})
+    assert company.enabled is True
+    assert Company.from_dict(company.to_dict()).enabled is True
 
 
 def test_dashboard_start_and_pause_controls_background_monitor(tmp_path):

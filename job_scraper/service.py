@@ -15,10 +15,12 @@ class JobService:
         self.notifier = notifier or TelegramNotifier()
 
     def scan_once(self, on_progress=None):
-        companies = self.storage.companies()
+        companies = [company for company in self.storage.companies() if company.enabled]
         total = len(companies)
         if on_progress:
             on_progress(0, total, "")
+        if not companies:
+            LOG.info("No enabled companies to scan")
         for index, company in enumerate(companies, start=1):
             if on_progress:
                 on_progress(index - 1, total, company.name)

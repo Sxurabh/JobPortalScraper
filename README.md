@@ -33,7 +33,7 @@ python -m pip install -e ".[browser]"
 python -m playwright install chromium
 ```
 
-State Street and FIS load their search listings with JavaScript, so this browser extra is needed for those integrations. In the dashboard, enter `Pune` in the company's **Locations** field and save it to fetch Pune roles.
+State Street, FIS, and Mastercard load their search listings with JavaScript, so this browser extra is needed for those integrations. BlackRock uses its static search pages when available and falls back to the browser if its listings are client-rendered. In the dashboard, enter a city in the company's **Locations** field and save it to fetch matching roles.
 
 Create a Telegram bot with BotFather, add it to your channel or group, and grant permission to post. Set the bot token and destination ID before running the scraper:
 
@@ -56,6 +56,7 @@ job-scraper company add "State Street" "https://careers.statestreet.com/global/e
 job-scraper company add "UBS" "https://jobs.ubs.com/TGnewUI/Search/home/HomeWithPreLoad?partnerid=25008&siteid=5012&PageType=searchResults&SearchType=linkquery&LinkID=15602" --location Pune
 job-scraper company add "bp" "https://careers.bp.com/listing" --location Pune
 job-scraper company add "Citi" "https://jobs.citi.com/" --location Pune
+job-scraper company add "BlackRock" "https://careers.blackrock.com/" --location Mumbai
 job-scraper company list
 job-scraper company remove "Acme"
 ```
@@ -68,10 +69,13 @@ Use `--keyword` and `--location` more than once to add alternatives. A job must 
     "name": "Acme",
     "url": "https://boards.greenhouse.io/acme",
     "keywords": ["engineer", "developer"],
-    "locations": ["remote", "New York"]
+    "locations": ["remote", "New York"],
+    "enabled": true
   }
 ]
 ```
+
+Use the **Include in scans** checkbox when adding or editing a company to pause that portal. Excluded companies remain in the dashboard and their queued Telegram alerts wait until they are enabled again. Existing company entries default to enabled.
 
 The config file is loaded into the SQLite database when a command runs. The default database is `jobs.sqlite3`. Keep both files in a persistent directory and back them up if needed.
 
@@ -97,12 +101,18 @@ Change the interval in seconds with `--interval` (for example, `--interval 900` 
 - Workday career-site URLs on `myworkdayjobs.com` and `myworkdaysite.com` use the site's public job search endpoint. Configured locations are resolved against Workday's location facets and applied server-side.
 - State Street's Phenom careers site is read from its public, paginated search-results pages. Configure a location such as `--location Pune` to send that city to the site's location search and keep matching city results. The scraper returns job titles, locations, descriptions, and links.
 - FIS Global's Phenom careers site is read from its public, paginated search-results pages. Configure a location such as `--location Pune` to select the matching City facet and keep matching city results.
+- Mastercard's Phenom careers site is read from its public, paginated search-results pages. Configure a location such as `--location Pune` to keep matching city results.
 - UBS's IBM BrassRing careers page is read from its embedded public search results. Configured locations such as `--location Pune` are applied through the portal's City facet.
 - bp's careers listing is read from its public Algolia search index. Results are paginated, configured locations are applied with the portal's location facets, and full descriptions load from bp's job detail pages.
 - Citi's TalentBrew careers site uses its public paginated search endpoint. Configured locations use Citi's location autocomplete and return only matching city listings; full descriptions load from the job detail page.
+- BlackRock's TalentBrew careers site is read from its paginated search pages. Configured locations are matched against each listing's primary location.
 - Other pages are parsed for JobPosting structured data and likely job links. If no static listings are found, installing the optional browser extra enables a Chromium fallback.
 
-Career pages vary and may change their layout or block automated requests. Check logs for a portal that returns no listings or errors. Polling every 30 minutes is the default; respect each site's terms and request limits.
+Career pages vary and may change their layout or block automated requests. Supported portals report an issue when their expected listing structure is missing; a valid empty result remains a successful scan. Polling every 30 minutes is the default; respect each site's terms and request limits.
+
+### Adding portal support
+
+Add a provider adapter module under `job_scraper/portals/`, register its host and handler in `job_scraper/portals/registry.py`, and mix its adapter into `PortalScraper`. The Phenom, Workday, Greenhouse, UBS, bp, and Citi adapters show this pattern. Add saved HTML or JSON fixtures and mocked request/browser tests for routing, parsing, locations, pagination, and valid empty results. Raise `PortalStructureError` when a supported portal no longer exposes its expected listing structure; scan errors are shown in the dashboard and log. Keep tests independent of live sites. The GitHub Actions test workflow runs the suite on pushes and pull requests.
 
 ## Tests
 

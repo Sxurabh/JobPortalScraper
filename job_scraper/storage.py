@@ -22,6 +22,7 @@ class Storage:
                 url TEXT NOT NULL,
                 keywords TEXT NOT NULL DEFAULT '[]',
                 locations TEXT NOT NULL DEFAULT '[]',
+                enabled INTEGER NOT NULL DEFAULT 1,
                 baseline_done INTEGER NOT NULL DEFAULT 0,
                 last_scanned_at TEXT,
                 last_scan_status TEXT NOT NULL DEFAULT 'waiting',
@@ -44,6 +45,7 @@ class Storage:
         # Additive migration for databases created by earlier scraper versions.
         company_columns = {row["name"] for row in self.db.execute("PRAGMA table_info(companies)")}
         for column, declaration in {
+            "enabled": "INTEGER NOT NULL DEFAULT 1",
             "last_scanned_at": "TEXT",
             "last_scan_status": "TEXT NOT NULL DEFAULT 'waiting'",
             "last_scan_error": "TEXT",
@@ -69,9 +71,9 @@ class Storage:
     def upsert_company(self, company: Company):
         with self.lock:
             self.db.execute(
-                "INSERT INTO companies(name,url,keywords,locations) VALUES(?,?,?,?) "
-                "ON CONFLICT(name) DO UPDATE SET url=excluded.url,keywords=excluded.keywords,locations=excluded.locations",
-                (company.name, company.url, json.dumps(company.keywords), json.dumps(company.locations)),
+                "INSERT INTO companies(name,url,keywords,locations,enabled) VALUES(?,?,?,?,?) "
+                "ON CONFLICT(name) DO UPDATE SET url=excluded.url,keywords=excluded.keywords,locations=excluded.locations,enabled=excluded.enabled",
+                (company.name, company.url, json.dumps(company.keywords), json.dumps(company.locations), int(company.enabled)),
             )
             self.db.commit()
 
@@ -83,7 +85,7 @@ class Storage:
 
     def companies(self) -> list[Company]:
         with self.lock:
-            return [Company(row["name"], row["url"], json.loads(row["keywords"]), json.loads(row["locations"]))
+            return [Company(row["name"], row["url"], json.loads(row["keywords"]), json.loads(row["locations"]), bool(row["enabled"]))
                     for row in self.db.execute("SELECT * FROM companies ORDER BY name COLLATE NOCASE")]
 
     def baseline_done(self, name: str) -> bool:
@@ -155,7 +157,9 @@ class Storage:
     def pending(self):
         with self.lock:
             return self.db.execute(
-                "SELECT company_name,url,title,location,description FROM jobs WHERE notification_status='pending' ORDER BY rowid"
+                "SELECT j.company_name,j.url,j.title,j.location,j.description FROM jobs j "
+                "JOIN companies c ON c.name=j.company_name COLLATE NOCASE "
+                "WHERE j.notification_status='pending' AND c.enabled=1 ORDER BY j.rowid"
             ).fetchall()
 
     def mark_sent(self, company_name: str, url: str):
@@ -172,9 +176,12 @@ class Storage:
     def company_health(self) -> list[dict]:
         with self.lock:
             rows = self.db.execute(
-                "SELECT name,url,keywords,locations,last_scanned_at,last_scan_status,last_scan_error,last_job_count,baseline_done FROM companies ORDER BY name COLLATE NOCASE"
+                "SELECT name,url,keywords,locations,enabled,last_scanned_at,last_scan_status,last_scan_error,last_job_count,baseline_done FROM companies ORDER BY name COLLATE NOCASE"
             ).fetchall()
-            return [dict(row) for row in rows]
+            companies = [dict(row) for row in rows]
+            for company in companies:
+                company["enabled"] = bool(company["enabled"])
+            return companies
 
     def recent_jobs(self, limit: int = 1000, scope: str = "matching") -> list[dict]:
         with self.lock:

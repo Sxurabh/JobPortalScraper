@@ -280,6 +280,7 @@ def create_app(config_path="companies.json", db_path="jobs.sqlite3", settings_pa
             url,
             _string_list(payload.get("keywords")),
             _string_list(payload.get("locations")),
+            bool(payload.get("enabled", True)),
         )
         storage.upsert_company(company)
         _write_company_config(config_path, storage.companies())
