@@ -37,7 +37,7 @@ class PortalScraper(PhenomAdapter, WorkdayAdapter, GreenhouseAdapter, UbsAdapter
         if not handler:
             return self._generic(url)
         method = getattr(self, handler)
-        if handler in {"_greenhouse"}:
+        if handler in {"_greenhouse", "_addepar"}:
             return method(url)
         return method(url, locations or [])
 
@@ -57,10 +57,17 @@ class PortalScraper(PhenomAdapter, WorkdayAdapter, GreenhouseAdapter, UbsAdapter
         company = urlparse(company_url)
         hostname = (company.hostname or "").casefold()
         posted = urlparse(job_url)
-        if not hostname or (posted.hostname or "").casefold() != hostname:
+        posted_host = (posted.hostname or "").casefold()
+        handler = handler_for(hostname)
+        is_addepar_greenhouse_job = (
+            handler == "_addepar"
+            and (posted_host == "greenhouse.io" or posted_host.endswith(".greenhouse.io"))
+        )
+        if not hostname or (posted_host != hostname and not is_addepar_greenhouse_job):
             return None
 
-        handler = handler_for(hostname)
+        if handler == "_addepar":
+            return self._greenhouse_job_details(job_url)
         if handler in {"_bp", "_citi"}:
             response = self.session.get(job_url, timeout=30)
             response.raise_for_status()

@@ -22,6 +22,7 @@ ROUTES = (
     PortalRoute(("jobs.ubs.com",), "_ubs"),
     PortalRoute(("careers.bp.com",), "_bp"),
     PortalRoute(("jobs.citi.com",), "_citi"),
+    PortalRoute(("addepar.com",), "_addepar"),
     PortalRoute(("greenhouse.io",), "_greenhouse"),
     PortalRoute(("myworkdayjobs.com", "myworkdaysite.com"), "_workday"),
 )

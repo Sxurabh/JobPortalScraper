@@ -103,6 +103,27 @@ def test_workday_details_use_the_job_posting_api():
     assert session.calls[0][1]["headers"] == {"Accept": "application/json"}
 
 
+def test_addepar_details_use_greenhouse_content_api_across_hosts():
+    payload = {"jobs": [{
+        "id": 123,
+        "title": "Staff Data Engineer",
+        "location": {"name": "New York"},
+        "content": "<div><h2>About the role</h2><p>Build resilient financial data products.</p></div>",
+    }]}
+    session = FakeSession(FakeResponse(payload=payload))
+
+    details = PortalScraper(session).fetch_job_details(
+        "https://addepar.com/careers",
+        "https://job-boards.greenhouse.io/addepar1/jobs/123",
+    )
+
+    assert details == {
+        "description": "About the role Build resilient financial data products.",
+        "location": "New York",
+    }
+    assert session.calls[0][0] == "https://boards-api.greenhouse.io/v1/boards/addepar1/jobs?content=true"
+
+
 def test_cross_host_job_detail_urls_are_not_requested():
     session = FakeSession(FakeResponse(text=_fixture("jobposting_details.html")))
 

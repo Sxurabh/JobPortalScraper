@@ -247,12 +247,13 @@ def test_addepar_style_embedded_greenhouse_board_is_discovered():
     page_html = '<div data-block-type="greenhouse_job_listing"><div id="greenhouse-jobs"><div class="js-greenhouse-board"></div></div></div><script src="/js/addepar.js"></script>'
     script_url = "https://addepar.com/js/addepar.js"
     script = 'fetch("https://api.greenhouse.io/v1/boards/addepar1/jobs")'
-    api_url = "https://api.greenhouse.io/v1/boards/addepar1/jobs"
+    api_url = "https://api.greenhouse.io/v1/boards/addepar1/jobs?content=true"
     payload = {"jobs": [{
+        "id": 123,
         "title": "Staff Data Engineer",
         "absolute_url": "https://job-boards.greenhouse.io/addepar1/jobs/123",
         "location": {"name": "Remote - US"},
-        "content": "<p>Build data products</p>",
+        "content": "<div><h2>About Addepar</h2><p>Build data products</p><h2>About the role</h2><p>Design and develop reliable financial data systems.</p><h2>What you'll do</h2><p>Collaborate with engineers and product teams.</p></div>",
     }]}
     session = FakeSession(routes={
         page_url: FakeResponse(text=page_html, url="https://addepar.com/careers"),
@@ -266,6 +267,10 @@ def test_addepar_style_embedded_greenhouse_board_is_discovered():
     assert jobs[0].title == "Staff Data Engineer"
     assert jobs[0].location == "Remote - US"
     assert jobs[0].url == "https://job-boards.greenhouse.io/addepar1/jobs/123"
+    assert jobs[0].description == (
+        "About Addepar Build data products About the role Design and develop reliable financial data systems. "
+        "What you'll do Collaborate with engineers and product teams."
+    )
     assert [call[1] for call in session.calls] == [page_url, script_url, api_url]
 
 

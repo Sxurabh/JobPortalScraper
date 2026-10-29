@@ -14,6 +14,15 @@ LOG = logging.getLogger(__name__)
 
 
 class GreenhouseAdapter:
+    def _addepar(self, url: str, locations=None) -> list[Job]:
+        """Fetch Addepar's embedded Greenhouse board with full JD content."""
+        response = self.session.get(url, timeout=30)
+        response.raise_for_status()
+        jobs = self._greenhouse_embed(response.text, getattr(response, "url", None) or url)
+        if jobs is None:
+            raise PortalStructureError("Addepar careers page no longer exposes its Greenhouse job board")
+        return jobs
+
     def _greenhouse(self, url: str) -> list[Job]:
         parsed = urlparse(url)
         parts = [part for part in parsed.path.split("/") if part]
@@ -54,7 +63,7 @@ class GreenhouseAdapter:
         )
         match = board_pattern.search(html)
         if match:
-            return self._greenhouse_board(match.group("board"), f"https://{match.group('host')}")
+            return self._greenhouse_board(match.group("board"), f"https://{match.group('host')}", content=True)
 
         page = urlparse(page_url)
         for script in soup.find_all("script", src=True):
@@ -71,10 +80,33 @@ class GreenhouseAdapter:
                 continue
             match = board_pattern.search(script_response.text)
             if match:
-                return self._greenhouse_board(match.group("board"), f"https://{match.group('host')}")
+                return self._greenhouse_board(match.group("board"), f"https://{match.group('host')}", content=True)
 
         LOG.warning("Found a Greenhouse widget at %s but could not discover its public board ID", page_url)
         raise PortalStructureError("Greenhouse widget no longer exposes a recognizable public board ID; portal may need maintenance")
+
+    def _greenhouse_job_details(self, job_url: str) -> dict | None:
+        """Get a single embedded-board job's full description from Greenhouse."""
+        parts = [part for part in urlparse(job_url).path.split("/") if part]
+        try:
+            jobs_index = next(index for index, part in enumerate(parts) if part.casefold() == "jobs")
+            board = parts[jobs_index - 1]
+            job_id = parts[jobs_index + 1]
+        except (StopIteration, IndexError):
+            return None
+        endpoint = f"https://boards-api.greenhouse.io/v1/boards/{quote(board)}/jobs?content=true"
+        response = self.session.get(endpoint, timeout=30)
+        response.raise_for_status()
+        payload = response.json()
+        if not isinstance(payload, dict) or not isinstance(payload.get("jobs"), list):
+            raise PortalStructureError("Greenhouse response has no recognizable jobs list; portal may need maintenance")
+        for item in payload["jobs"]:
+            if str(item.get("id", "")) == job_id:
+                location = item.get("location") or {}
+                if isinstance(location, dict):
+                    location = location.get("name", "")
+                return {"description": _greenhouse_plain(item.get("content", "")), "location": str(location)}
+        return {"description": "", "location": ""}
 
 
 def _greenhouse_plain(value):
