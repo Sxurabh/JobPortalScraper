@@ -3,6 +3,7 @@
 import json
 import logging
 import os
+import re
 import threading
 import time
 from datetime import datetime, timezone
@@ -12,15 +13,25 @@ from flask import Flask, jsonify, render_template, request
 from werkzeug.serving import make_server
 
 from .models import Company
+from .env import load_project_env
 from .notifier import TelegramNotifier
 from .service import JobService
 from .storage import Storage
 
 LOG = logging.getLogger(__name__)
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
 def _utc_now():
     return datetime.now(timezone.utc).isoformat()
+
+
+def _data_path(value, default_name):
+    """Resolve default app data from the project, independent of launch cwd."""
+    if value is None:
+        return PROJECT_ROOT / default_name
+    path = Path(value).expanduser()
+    return path.resolve() if path.is_absolute() else (PROJECT_ROOT / path).resolve()
 
 
 class MonitorController:
@@ -121,6 +132,7 @@ class MonitorController:
             self.condition.notify_all()
         if self.thread and self.thread.is_alive():
             self.thread.join(timeout=2)
+        self.service.close_background_workers()
 
     def snapshot(self):
         with self.condition:
@@ -152,11 +164,13 @@ class ConfiguredNotifier:
         TelegramNotifier(token=token, chat_id=chat_id).send(company, title, location, url)
 
 
-def create_app(config_path="companies.json", db_path="jobs.sqlite3", settings_path="settings.json", *, scraper=None, start_worker=True):
+def create_app(config_path=None, db_path=None, settings_path=None, *, scraper=None, start_worker=True):
+    load_project_env()
     app = Flask(__name__)
-    config_path = Path(config_path).resolve()
-    settings_path = Path(settings_path).resolve()
-    storage = Storage(Path(db_path).resolve())
+    config_path = _data_path(config_path, "companies.json")
+    db_path = _data_path(db_path, "jobs.sqlite3")
+    settings_path = _data_path(settings_path, "settings.json")
+    storage = Storage(db_path)
     if config_path.exists():
         raw_companies = json.loads(config_path.read_text(encoding="utf-8"))
         for entry in raw_companies:
@@ -168,6 +182,7 @@ def create_app(config_path="companies.json", db_path="jobs.sqlite3", settings_pa
     except (OSError, json.JSONDecodeError):
         settings_data = {}
     interval = _validated_interval(settings_data.get("interval_minutes", 30))
+    storage.set_sheet_target(settings_data.get("google_spreadsheet_id", ""))
 
     def get_settings():
         with settings_lock:
@@ -180,9 +195,15 @@ def create_app(config_path="companies.json", db_path="jobs.sqlite3", settings_pa
             settings_path.parent.mkdir(parents=True, exist_ok=True)
             temp_path = settings_path.with_suffix(settings_path.suffix + ".tmp")
             temp_path.write_text(json.dumps(settings_data, indent=2) + "\n", encoding="utf-8")
+            try:
+                os.chmod(temp_path, 0o600)
+            except OSError:
+                LOG.warning("Could not restrict permissions on local settings file")
             temp_path.replace(settings_path)
 
     service = JobService(storage, scraper=scraper, notifier=ConfiguredNotifier(get_settings))
+    if start_worker:
+        service.start_background_workers(settings_provider=get_settings)
     controller = MonitorController(service, interval_seconds=interval * 60) if start_worker else None
     if controller is None:
         controller = MonitorController.__new__(MonitorController)
@@ -212,6 +233,13 @@ def create_app(config_path="companies.json", db_path="jobs.sqlite3", settings_pa
         settings = get_settings()
         state.update(storage.dashboard_counts())
         state["companies_detail"] = companies
+        spreadsheet_id = settings.get("google_spreadsheet_id", "")
+        credential_file = os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE", "")
+        state["google_sheets"] = storage.sheet_sync_health(
+            configured=bool(spreadsheet_id),
+            credentials_configured=bool(credential_file and Path(credential_file).is_file()),
+        )
+        state["job_descriptions_pending"] = storage.pending_job_enrichment_count()
         state["telegram_configured"] = bool((settings.get("bot_token") or os.getenv("TELEGRAM_BOT_TOKEN")) and (settings.get("chat_id") or os.getenv("TELEGRAM_CHAT_ID")))
         state["interval_minutes"] = state["interval_seconds"] // 60
         return jsonify(state)
@@ -259,7 +287,10 @@ def create_app(config_path="companies.json", db_path="jobs.sqlite3", settings_pa
                 full_details = fetch_details(company.url, url)
                 if full_details:
                     details.update({key: value for key, value in full_details.items() if value})
-                    storage.save_job_details(company_name, url, details["description"], details["location"])
+                    storage.save_job_details(
+                        company_name, url, full_details.get("description", ""), details["location"],
+                        complete=bool(full_details.get("description")),
+                    )
             except Exception as exc:
                 LOG.info("Could not load full job details for %s (%s)", company_name, type(exc).__name__)
         return jsonify(details)
@@ -328,6 +359,11 @@ def create_app(config_path="companies.json", db_path="jobs.sqlite3", settings_pa
             bot_token_configured=bool(values.get("bot_token") or os.getenv("TELEGRAM_BOT_TOKEN")),
             chat_id=values.get("chat_id") or os.getenv("TELEGRAM_CHAT_ID", ""),
             interval_minutes=controller.snapshot()["interval_seconds"] // 60,
+            google_spreadsheet_id=values.get("google_spreadsheet_id", ""),
+            google_credentials_configured=bool(
+                os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE")
+                and Path(os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE", "")).is_file()
+            ),
         )
 
     @app.post("/api/settings")
@@ -339,19 +375,35 @@ def create_app(config_path="companies.json", db_path="jobs.sqlite3", settings_pa
             return jsonify(error="Polling interval must be between 1 and 1440 minutes."), 400
         previous = get_settings()
         token = str(payload.get("bot_token", "")).strip() or previous.get("bot_token", "")
+        token = token or os.getenv("TELEGRAM_BOT_TOKEN", "")
         chat_id = str(payload.get("chat_id", "")).strip()
         if not chat_id:
             chat_id = previous.get("chat_id") or os.getenv("TELEGRAM_CHAT_ID", "")
-        values = {"bot_token": token, "chat_id": chat_id, "interval_minutes": minutes}
+        if bool(token) != bool(chat_id):
+            return jsonify(error="Telegram needs both a bot token and a channel or chat ID. Enter both, then save settings."), 400
+        try:
+            spreadsheet_id = _validated_spreadsheet_id(
+                payload.get("google_spreadsheet_id", previous.get("google_spreadsheet_id", ""))
+            )
+        except ValueError as exc:
+            return jsonify(error=str(exc)), 400
+        values = {
+            "bot_token": token,
+            "chat_id": chat_id,
+            "interval_minutes": minutes,
+            "google_spreadsheet_id": spreadsheet_id,
+        }
+        storage.set_sheet_target(spreadsheet_id)
         save_settings(values)
         controller.set_interval(minutes * 60)
-        return jsonify(ok=True, bot_token_configured=bool(token or os.getenv("TELEGRAM_BOT_TOKEN")), chat_id=chat_id, interval_minutes=minutes)
+        return jsonify(ok=True, bot_token_configured=bool(token or os.getenv("TELEGRAM_BOT_TOKEN")), chat_id=chat_id, interval_minutes=minutes, google_spreadsheet_id=spreadsheet_id)
 
     @app.post("/api/settings/test-telegram")
     def test_telegram():
         values = get_settings()
-        token = values.get("bot_token") or os.getenv("TELEGRAM_BOT_TOKEN")
-        chat_id = values.get("chat_id") or os.getenv("TELEGRAM_CHAT_ID")
+        payload = request.get_json(silent=True) or {}
+        token = str(payload.get("bot_token", "")).strip() or values.get("bot_token") or os.getenv("TELEGRAM_BOT_TOKEN")
+        chat_id = str(payload.get("chat_id", "")).strip() or values.get("chat_id") or os.getenv("TELEGRAM_CHAT_ID")
         if not token or not chat_id:
             return jsonify(error="Add your Telegram bot token and channel or chat ID first."), 400
         try:
@@ -369,6 +421,17 @@ def _validated_interval(value):
     if not 1 <= minutes <= 1440:
         raise ValueError("Interval out of range")
     return minutes
+
+
+def _validated_spreadsheet_id(value):
+    value = str(value or "").strip()
+    if not value:
+        return ""
+    match = re.search(r"/spreadsheets/d/([A-Za-z0-9_-]+)", value)
+    spreadsheet_id = match.group(1) if match else value
+    if not re.fullmatch(r"[A-Za-z0-9_-]{10,200}", spreadsheet_id):
+        raise ValueError("Enter a Google spreadsheet ID or URL.")
+    return spreadsheet_id
 
 
 def _string_list(value):

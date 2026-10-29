@@ -22,10 +22,18 @@ class TelegramNotifier:
                 json={"chat_id": self.chat_id, "text": "\n".join(lines), "disable_web_page_preview": True},
                 timeout=20,
             )
-            response.raise_for_status()
         except requests.RequestException as exc:
             # Telegram places the bot token in the URL path; never let Requests' exception text leak it to logs.
             raise RuntimeError(f"Telegram request failed ({type(exc).__name__})") from None
-        payload = response.json()
+        try:
+            payload = response.json()
+        except (ValueError, requests.RequestException):
+            payload = {}
+        if not isinstance(payload, dict):
+            payload = {}
+        if not response.ok:
+            description = payload.get("description", "") if isinstance(payload, dict) else ""
+            reason = f": {description}" if description else f" (HTTP {response.status_code})"
+            raise RuntimeError(f"Telegram rejected the message{reason}")
         if not payload.get("ok"):
             raise RuntimeError(f"Telegram rejected alert: {payload.get('description', 'unknown error')}")

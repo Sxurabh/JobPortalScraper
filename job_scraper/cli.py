@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 
 from .models import Company
+from .env import load_project_env
 from .service import JobService
 from .storage import Storage
 
@@ -47,6 +48,7 @@ def _save_config(path: Path, companies: list[Company]):
 
 
 def main(argv=None):
+    load_project_env()
     args = _parser().parse_args(argv)
     logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO").upper(), format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     config_path = Path(args.config)

@@ -226,6 +226,7 @@ def test_ubs_adapter_parses_embedded_search_payload():
                 {"QuestionName": "jobtitle", "Value": "Data Analyst"},
                 {"QuestionName": "formtext2", "Value": "Pune"},
                 {"QuestionName": "formtext23", "Value": "India"},
+                {"QuestionName": "jobdescription", "Value": "<p>Analyze financial data and create reports.</p>"},
             ],
         }]}},
         "SmartSearchJSONValue": "{}",
@@ -236,6 +237,7 @@ def test_ubs_adapter_parses_embedded_search_payload():
     assert len(jobs) == 1
     assert jobs[0].title == "Data Analyst"
     assert jobs[0].location == "Pune, India"
+    assert jobs[0].description == "Analyze financial data and create reports."
 
 
 def test_addepar_style_embedded_greenhouse_board_is_discovered():
@@ -274,7 +276,7 @@ def test_workday_uses_public_search_endpoint():
     assert method == "post"
     assert url == "https://acme.wd5.myworkdayjobs.com/wday/cxs/acme/External/jobs"
     assert options["json"]["searchText"] == ""
-    assert jobs[0].url == "https://acme.wd5.myworkdayjobs.com/job/Analyst_R123"
+    assert jobs[0].url == "https://acme.wd5.myworkdayjobs.com/en-US/External/job/Analyst_R123"
     assert jobs[0].location == "Toronto, Canada"
 
 
@@ -305,7 +307,10 @@ def test_workday_site_uses_exact_location_facet_for_ssc():
 
     assert len(jobs) == 1
     assert jobs[0].location == "Pune India - Commerzone Building 7"
-    assert jobs[0].url == "https://wd1.myworkdaysite.com/job/Pune-India---Commerzone-Building-7/Associate_R123"
+    assert jobs[0].url == (
+        "https://wd1.myworkdaysite.com/en-US/recruiting/ssctech/SSCTechnologies/"
+        "job/Pune-India---Commerzone-Building-7/Associate_R123?locations=pune-commerzone-id"
+    )
     assert session.calls[0][1] == api
     assert session.calls[1][2]["json"]["appliedFacets"] == {"locations": ["pune-commerzone-id"]}
 

@@ -1,7 +1,7 @@
 """Workday career-site adapter and location/job URL helpers."""
 
 import logging
-from urllib.parse import urlencode, urljoin, urlparse
+from urllib.parse import parse_qsl, urlencode, urljoin, urlparse
 
 from ..models import Job
 from .errors import PortalStructureError
@@ -91,7 +91,7 @@ class WorkdayAdapter:
                     locale_and_site_path,
                     path,
                     _workday_location_id_for_job(location_facets, location, location_ids)
-                    if locations and site.casefold() == "apexgroupcareers" else "",
+                    if locations else "",
                     strip_location_segment=site.casefold() == "apexgroupcareers",
                 )
                 if title and link and link not in seen_job_links:
@@ -158,29 +158,35 @@ def _workday_job_url(
     strip_location_segment: bool = False,
 ) -> str:
     """Build a clickable Workday job page from the CXS externalPath."""
-    origin = f"{parsed.scheme}://{parsed.netloc}"
     external = urlparse(external_path)
     path = external.path or external_path
+    origin = f"{external.scheme}://{external.netloc}" if external.scheme and external.netloc else f"{parsed.scheme}://{parsed.netloc}"
     segments = [segment for segment in path.split("/") if segment]
     try:
         job_index = next(index for index, segment in enumerate(segments) if segment.casefold() == "job")
     except StopIteration:
         job_index = -1
     if job_index >= 0 and job_index + 1 < len(segments):
-        # Apex uses the requisition slug and a location query facet. Other
-        # Workday boards, including Northern Trust, keep the location in path.
+        # externalPath from the CXS API is commonly just /job/<slug>. Public
+        # Workday links need the locale and career-site/recruiting prefix too.
         route_segments = segments[job_index:]
         if strip_location_segment and len(route_segments) > 2:
             route_segments = [route_segments[0], route_segments[-1]]
         route = "/" + "/".join(route_segments)
-        link = origin + route
-    elif external_path.startswith("http"):
+        prefix = locale_and_site_path.rstrip("/")
+        if path.casefold().startswith((prefix + "/").casefold()):
+            link = origin + path
+        else:
+            link = origin + prefix + route
+    elif external.scheme and external.netloc:
         link = external_path
     else:
         link = urljoin(origin + locale_and_site_path.rstrip("/") + "/", path)
     query = external.query
     if location_id:
-        query = urlencode({"locations": location_id})
+        query_values = dict(parse_qsl(query, keep_blank_values=True))
+        query_values["locations"] = location_id
+        query = urlencode(query_values)
     if query:
         link += "&" + query if "?" in link else "?" + query
     return link

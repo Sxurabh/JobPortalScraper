@@ -2,6 +2,8 @@ import json
 import sqlite3
 import time
 
+import pytest
+
 from job_scraper.web import create_app
 from job_scraper.models import Company, Job
 
@@ -72,6 +74,27 @@ def test_legacy_company_config_defaults_to_enabled():
     assert Company.from_dict(company.to_dict()).enabled is True
 
 
+def test_google_spreadsheet_settings_accept_url_and_queue_existing_jobs(tmp_path):
+    app = create_app(tmp_path / "companies.json", tmp_path / "jobs.sqlite3", tmp_path / "settings.json", start_worker=False)
+    storage = app.config["STORAGE"]
+    company = Company("Acme", "https://careers.example.com")
+    storage.upsert_company(company)
+    storage.save_baseline(company, [Job("Engineer", "https://careers.example.com/job/1", description="Full JD")])
+    client = app.test_client()
+
+    response = client.post("/api/settings", json={
+        "interval_minutes": 30,
+        "google_spreadsheet_id": "https://docs.google.com/spreadsheets/d/abcdefghij_123/edit#gid=0",
+    })
+
+    assert response.status_code == 200
+    assert response.json["google_spreadsheet_id"] == "abcdefghij_123"
+    assert len(storage.pending_sheet_jobs()) == 1
+    assert client.get("/api/settings").json["google_spreadsheet_id"] == "abcdefghij_123"
+    assert client.post("/api/settings", json={"google_spreadsheet_id": "invalid id"}).status_code == 400
+    storage.close()
+
+
 def test_dashboard_start_and_pause_controls_background_monitor(tmp_path):
     app = create_app(tmp_path / "companies.json", tmp_path / "jobs.sqlite3", tmp_path / "settings.json")
     client = app.test_client()
@@ -113,4 +136,41 @@ def test_jobs_view_lists_baseline_matches_and_all_openings(tmp_path):
     storage.upsert_company(Company("Addepar", "https://addepar.com/careers", ["Designer"], []))
     assert [job["title"] for job in client.get("/api/jobs").json] == ["Senior Product Designer"]
     assert client.get("/api/jobs?scope=invalid").status_code == 400
+    storage.close()
+
+
+@pytest.mark.parametrize("detail_result", [
+    {"description": "", "location": ""},
+    RuntimeError("temporary portal failure"),
+])
+def test_job_details_keep_saved_description_when_live_details_are_empty_or_fail(tmp_path, detail_result):
+    class DetailScraper:
+        def fetch(self, url, locations=None):
+            return []
+
+        def fetch_job_details(self, company_url, job_url):
+            if isinstance(detail_result, Exception):
+                raise detail_result
+            return detail_result
+
+    app = create_app(
+        tmp_path / "companies.json",
+        tmp_path / "jobs.sqlite3",
+        tmp_path / "settings.json",
+        scraper=DetailScraper(),
+        start_worker=False,
+    )
+    storage = app.config["STORAGE"]
+    company = Company("BlackRock", "https://careers.blackrock.com/")
+    job_url = "https://careers.blackrock.com/job/mumbai/analyst/45831/123"
+    saved_description = "Previously saved full description."
+    storage.upsert_company(company)
+    storage.save_baseline(company, [Job("Analyst", job_url, "Mumbai, India", saved_description)])
+    client = app.test_client()
+
+    response = client.get("/api/jobs/details", query_string={"company": "BlackRock", "url": job_url})
+
+    assert response.status_code == 200
+    assert response.json["description"] == saved_description
+    assert storage.get_job("BlackRock", job_url)["description"] == saved_description
     storage.close()

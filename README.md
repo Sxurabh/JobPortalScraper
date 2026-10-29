@@ -22,9 +22,15 @@ It opens the dashboard in your browser. Leave this Terminal window running while
 
 The dashboard is available at [http://127.0.0.1:8765](http://127.0.0.1:8765) and is bound to this computer only. Use **Add a company** to manage career pages and optional role and location filters. On the overview, choose **Start monitoring** to run scans every 30 minutes, or use **Scan now** for a one-off check. The first scan silently records current listings; later scans alert Telegram for new matching jobs. Use **Settings** to enter your Telegram bot token and channel/chat ID, select an interval, and send a test message.
 
-Open **Details** on a job to review its scraped description and link, track its application status, and save private notes locally. The Job matches page can export its current filtered view as CSV or JSON. Job details, tracking, filters, and exports are laid out for mobile screens; use the theme button in the top bar to switch between light and dark modes.
+Open **Details** on a job to review its scraped description and link, track its application status, and save notes locally. Job descriptions are enriched in the background when a portal provides a full detail page. If Google Sheets is configured, job records and notes are also mirrored there. The Job matches page can export its current filtered view as CSV or JSON. Job details, tracking, filters, and exports are laid out for mobile screens; use the theme button in the top bar to switch between light and dark modes.
 
 Company settings continue to be saved in `companies.json`; job and scan history remain in `jobs.sqlite3`. Telegram settings are saved locally in the git-ignored `settings.json`. If you already set Telegram environment variables, the dashboard can use those until you save settings in the UI.
+
+### Google Sheets master mirror
+
+SQLite remains the source of truth. To keep a Google spreadsheet updated, create a Google service account, enable the Google Sheets API for its project, create a JSON key, and set `GOOGLE_SERVICE_ACCOUNT_FILE` to that key's local path in the project-root `.env`. The app loads `.env` on startup, and process environment values take precedence. The repository ignores `.env` and common service-account key filenames; storing the key outside the project is still preferable. Install the optional integration dependency with `python -m pip install -e ".[google]"`.
+
+Create a spreadsheet in your Drive, share it with the service account's `client_email` value as an Editor, then paste its URL or ID into **Settings → Google Sheets master spreadsheet**. The app creates a `Jobs` tab and keeps one row per job, including inactive history, full descriptions, first/last seen dates, alert/application status, and application notes. Sheets failures are retried from the local queue and do not stop scans. Descriptions are fetched one at a time in the background; saved description text is kept if a portal does not return a full JD.
 
 Optional browser fallback for career sites rendered by JavaScript:
 
@@ -42,7 +48,7 @@ export TELEGRAM_BOT_TOKEN="your_bot_token"
 export TELEGRAM_CHAT_ID="@your_channel_or_chat_id"
 ```
 
-For a private channel, use its numeric chat ID (often beginning with `-100`). Keep the bot token private. The application reads environment variables and does not load `.env` automatically.
+For a private channel, use its numeric chat ID (often beginning with `-100`). Keep the bot token private. The dashboard and CLI load variables from the project-root `.env` file without replacing values already set in the process environment.
 
 ## Add companies
 

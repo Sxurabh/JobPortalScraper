@@ -21,6 +21,7 @@ from .portals.ubs import UbsAdapter
 from .portals.bp import BpAdapter
 from .portals.citi import CitiAdapter
 from .portals.blackrock import BlackRockAdapter
+from .portals.details import parse_job_details_html
 
 LOG = logging.getLogger(__name__)
 HEADERS = {"User-Agent": "JobPortalScraper/0.1 (+personal job alerts)"}
@@ -44,53 +45,41 @@ class PortalScraper(PhenomAdapter, WorkdayAdapter, GreenhouseAdapter, UbsAdapter
         """Fetch using company-specific portal filters when supported."""
         return self.fetch(company.url, locations=company.locations)
 
+    def needs_job_enrichment(self, company_url: str, job: Job) -> bool:
+        """Return whether a listing has only a summary or no JD at all."""
+        handler = handler_for(urlparse(company_url).hostname or "")
+        if handler in {"_blackrock", "_statestreet", "_fisglobal", "_mastercard", "_bp", "_citi", "_workday"}:
+            return True
+        return not bool(job.description.strip())
+
     def fetch_job_details(self, company_url: str, job_url: str) -> dict | None:
-        """Load full public job details for supported portals on demand."""
+        """Load full public job details for registered portals on demand."""
         company = urlparse(company_url)
         hostname = (company.hostname or "").casefold()
         posted = urlparse(job_url)
-        if hostname == "careers.bp.com" and posted.hostname == hostname and posted.path.startswith("/job-description/"):
+        if not hostname or (posted.hostname or "").casefold() != hostname:
+            return None
+
+        handler = handler_for(hostname)
+        if handler in {"_bp", "_citi"}:
             response = self.session.get(job_url, timeout=30)
             response.raise_for_status()
-            soup = BeautifulSoup(response.text, "html.parser")
-            for node in soup.select('script[type="application/ld+json"]'):
-                try:
-                    data = json.loads(node.string or node.get_text())
-                except (json.JSONDecodeError, TypeError):
-                    continue
-                for item in _flatten_jsonld(data):
-                    if item.get("@type") != "JobPosting":
-                        continue
-                    place = item.get("jobLocation", {})
-                    if isinstance(place, list):
-                        place = place[0] if place else {}
-                    address = place.get("address", {}) if isinstance(place, dict) else {}
-                    country = address.get("addressCountry", "") if isinstance(address, dict) else ""
-                    if isinstance(country, dict):
-                        country = country.get("name", "")
-                    location = ", ".join(filter(None, [
-                        address.get("addressLocality", "") if isinstance(address, dict) else "",
-                        address.get("addressRegion", "") if isinstance(address, dict) else "",
-                        country,
-                    ]))
-                    return {"description": _plain(item.get("description", "")), "location": location}
-            return None
-        if hostname == "jobs.citi.com" and posted.hostname == hostname and posted.path.startswith("/job/"):
+            return parse_job_details_html(response.text)
+
+        if handler in {"_blackrock", "_statestreet", "_fisglobal", "_mastercard"}:
             response = self.session.get(job_url, timeout=30)
             response.raise_for_status()
-            soup = BeautifulSoup(response.text, "html.parser")
-            for node in soup.select('script[type="application/ld+json"]'):
-                try:
-                    data = json.loads(node.string or node.get_text())
-                except (json.JSONDecodeError, TypeError):
-                    continue
-                for item in _flatten_jsonld(data):
-                    if item.get("@type") != "JobPosting":
-                        continue
-                    return {"description": _plain(item.get("description", "")), "location": ""}
+            return parse_job_details_html(response.text)
+
+        if handler not in {"_workday", None}:
+            # Greenhouse and UBS provide descriptions in their listing payloads.
             return None
-        if not any(hostname == domain or hostname.endswith("." + domain) for domain in ("myworkdayjobs.com", "myworkdaysite.com")):
-            return None
+
+        if handler is None:
+            response = self.session.get(job_url, timeout=30)
+            response.raise_for_status()
+            return parse_job_details_html(response.text)
+
         parts = [part for part in company.path.split("/") if part]
         if (company.hostname or "").endswith("myworkdaysite.com"):
             try:

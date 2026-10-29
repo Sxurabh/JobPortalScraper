@@ -231,28 +231,26 @@
     $("#tracking-message").textContent = "";
     $("#job-details-modal").classList.add("open");
     $("#job-details-modal").setAttribute("aria-hidden", "false");
-    if (/myworkdayjobs\.com|myworkdaysite\.com|careers\.bp\.com|jobs\.citi\.com/i.test(job.url)) {
-      const fallbackDescription = job.description || "No description was included in the career portal listing.";
-      $("#job-details-description").textContent = fallbackDescription === "No description was included in the career portal listing."
-        ? "Loading the full job description…"
-        : `${fallbackDescription}\n\nLoading full description…`;
-      const params = new URLSearchParams({ company: job.company_name, url: job.url });
-      api(`/api/jobs/details?${params}`).then((details) => {
-        if (state.detailJob !== job) return;
-        if (details.description) {
-          job.description = details.description;
-          [state.jobs, state.allJobs].forEach((jobs) => jobs.forEach((item) => {
-            if (item.company_name === job.company_name && item.url === job.url) item.description = details.description;
-          }));
-          $("#job-details-description").textContent = details.description;
-        } else {
-          $("#job-details-description").textContent = fallbackDescription;
-        }
-        if (details.location) $("#job-details-location").textContent = details.location;
-      }).catch(() => {
-        if (state.detailJob === job) $("#job-details-description").textContent = fallbackDescription;
-      });
-    }
+    const fallbackDescription = job.description || "No description was included in the career portal listing.";
+    $("#job-details-description").textContent = fallbackDescription === "No description was included in the career portal listing."
+      ? "Loading the full job description…"
+      : `${fallbackDescription}\n\nLoading full description…`;
+    const params = new URLSearchParams({ company: job.company_name, url: job.url });
+    api(`/api/jobs/details?${params}`).then((details) => {
+      if (state.detailJob !== job) return;
+      if (details.description) {
+        job.description = details.description;
+        [state.jobs, state.allJobs].forEach((jobs) => jobs.forEach((item) => {
+          if (item.company_name === job.company_name && item.url === job.url) item.description = details.description;
+        }));
+        $("#job-details-description").textContent = details.description;
+      } else {
+        $("#job-details-description").textContent = fallbackDescription;
+      }
+      if (details.location) $("#job-details-location").textContent = details.location;
+    }).catch(() => {
+      if (state.detailJob === job) $("#job-details-description").textContent = fallbackDescription;
+    });
   }
 
   function closeJobDetails() {
@@ -421,7 +419,20 @@
     card.classList.toggle("is-scanning", status.scanning || status.scan_requested);
     $("#monitor-label").textContent = status.scanning ? "CHECKING CAREER PAGES" : status.monitoring ? "RADAR IS ACTIVE" : "MONITORING PAUSED";
     $("#monitor-title").textContent = status.scanning ? "A fresh look around." : status.monitoring ? "Your radar is watching." : "Your radar is ready.";
-    $("#monitor-description").textContent = companyErrors.length ? `${companyErrors.length} portal${companyErrors.length === 1 ? " needs" : "s need"} attention. See the company list for details.` : status.pending ? `${status.pending} alert${status.pending === 1 ? " is" : "s are"} waiting for Telegram. Check your delivery settings.` : status.monitoring ? "We’ll let you know when something worth a look appears." : "Start monitoring to catch new roles as soon as they appear.";
+    const sheets = status.google_sheets || {};
+    if (sheets.configured) {
+      $("#sheets-hint").textContent = sheets.last_sync_status === "error"
+        ? `Google Sheets sync error: ${sheets.last_sync_error || "check spreadsheet access and credentials"}`
+        : sheets.pending
+          ? `${sheets.pending} job record${sheets.pending === 1 ? " is" : "s are"} queued for Google Sheets.`
+          : sheets.last_sync_at ? `Last Google Sheets sync: ${relativeTime(sheets.last_sync_at)}.` : "Google Sheets is configured; waiting for the first sync.";
+    }
+    $("#monitor-description").textContent = companyErrors.length ? `${companyErrors.length} portal${companyErrors.length === 1 ? " needs" : "s need"} attention. See the company list for details.`
+      : sheets.configured && sheets.last_sync_status === "error" ? "Google Sheets sync needs attention. Check the spreadsheet settings and logs."
+        : sheets.configured && sheets.pending ? `${sheets.pending} job record${sheets.pending === 1 ? " is" : "s are"} waiting to sync to Google Sheets.`
+          : status.job_descriptions_pending ? `${status.job_descriptions_pending} job description${status.job_descriptions_pending === 1 ? " is" : "s are"} being enriched in the background.`
+            : status.pending ? `${status.pending} alert${status.pending === 1 ? " is" : "s are"} waiting for Telegram. Check your delivery settings.`
+              : status.monitoring ? "We’ll let you know when something worth a look appears." : "Start monitoring to catch new roles as soon as they appear.";
     $("#monitor-action-text").textContent = status.monitoring ? "Pause monitoring" : "Start monitoring";
     $("#monitor-action-icon").textContent = status.monitoring ? "Ⅱ" : "▶";
     $("#monitor-action").disabled = status.scanning && !status.monitoring;
@@ -535,6 +546,10 @@
       const settings = await api("/api/settings");
       $("#chat-id").value = settings.chat_id || "";
       $("#interval").value = String(settings.interval_minutes);
+      $("#google-spreadsheet-id").value = settings.google_spreadsheet_id || "";
+      $("#sheets-hint").textContent = settings.google_credentials_configured
+        ? "Service-account key found. Spreadsheet changes sync in the background."
+        : "Job rows will wait locally until GOOGLE_SERVICE_ACCOUNT_FILE points to the shared service-account key.";
       $("#token-hint").textContent = settings.bot_token_configured ? "A bot token is saved. Leave this blank to keep it unchanged." : "Your token is stored locally and never shown after saving.";
     } catch (error) { $("#settings-message").textContent = error.message; }
   }
@@ -626,10 +641,10 @@
       message.classList.remove("error");
       message.textContent = "Saving your preferences…";
       try {
-        const data = await api("/api/settings", { method: "POST", body: JSON.stringify({ bot_token: $("#bot-token").value, chat_id: $("#chat-id").value, interval_minutes: Number($("#interval").value) }) });
+        const data = await api("/api/settings", { method: "POST", body: JSON.stringify({ bot_token: $("#bot-token").value, chat_id: $("#chat-id").value, interval_minutes: Number($("#interval").value), google_spreadsheet_id: $("#google-spreadsheet-id").value.trim() }) });
         $("#bot-token").value = "";
         $("#token-hint").textContent = data.bot_token_configured ? "A bot token is saved. Leave this blank to keep it unchanged." : "Your token is stored locally and never shown after saving.";
-        message.textContent = "Settings saved. Your radar will use these preferences on its next check.";
+        message.textContent = data.google_spreadsheet_id ? "Settings saved. Jobs will sync to Google Sheets in the background." : "Settings saved. Your radar will use these preferences on its next check.";
         showToast("Settings saved.");
         await refresh();
       } catch (error) { message.textContent = error.message; message.classList.add("error"); }
@@ -641,7 +656,7 @@
       message.classList.remove("error");
       message.textContent = "Sending a test message…";
       try {
-        const result = await api("/api/settings/test-telegram", { method: "POST", body: "{}" });
+        const result = await api("/api/settings/test-telegram", { method: "POST", body: JSON.stringify({ bot_token: $("#bot-token").value, chat_id: $("#chat-id").value }) });
         message.textContent = result.message;
         showToast(result.message);
       } catch (error) { message.textContent = error.message; message.classList.add("error"); }

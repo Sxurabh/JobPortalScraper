@@ -13,6 +13,7 @@ dependencies = ["requests>=2.31,<3", "beautifulsoup4>=4.12,<5", "Flask>=3.0,<4"]
 [project.optional-dependencies]
 browser = ["playwright>=1.45,<2"]
 dev = ["pytest>=8,<9"]
+google = ["google-auth>=2.29,<3"]
 
 [project.scripts]
 job-scraper = "job_scraper.cli:main"
