@@ -1,128 +1,192 @@
-# Job Portal Scraper
+<div align="center">
+  <img src="docs/readme-hero.svg" alt="Career Radar — your next role, within reach" width="100%">
+  <br>
+  <p><strong>A personal job discovery dashboard that watches career portals, keeps your job history organized, and sends matching roles to Telegram.</strong></p>
+  <p>
+    <img src="https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white" alt="Python 3.10 or newer">
+    <img src="https://img.shields.io/badge/Storage-SQLite-003B57?logo=sqlite&logoColor=white" alt="SQLite storage">
+    <img src="https://img.shields.io/badge/Interface-Local%20dashboard-174A34" alt="Local dashboard">
+    <a href=".github/workflows/tests.yml"><img src="https://img.shields.io/badge/Tests-pytest-0A9EDC?logo=pytest&logoColor=white" alt="pytest suite"></a>
+  </p>
+  <p><a href="#get-started">Get started</a> · <a href="#features">Features</a> · <a href="#supported-portals">Supported portals</a> · <a href="#configuration">Configuration</a></p>
+</div>
 
-Monitor company career pages and send Telegram alerts when new matching jobs appear. The scraper runs on your computer or server; it does not require a hosted service.
+---
 
-## Install
+## Find roles without checking every careers page
+
+Career Radar scans the company career sites you choose, applies your role and location filters, and alerts you when it finds a new match. Run it on your own computer; jobs, application notes, and settings stay in your local project unless you enable the optional Google Sheets mirror.
+
+```mermaid
+flowchart LR
+    A[Company career portals] --> B[Portal adapters]
+    B --> C[(Local SQLite job history)]
+    C --> D[Role and location filters]
+    D --> E[Telegram alerts]
+    C -. optional mirror .-> F[(Google Sheets)]
+    C --> G[Local dashboard and CSV / JSON]
+```
+
+## Features
+
+- **One dashboard for your watchlist** — add or edit companies, filter by keywords and locations, and pause a company with its include switch.
+- **Portal-aware scraping** — adapters handle each site's search API, pagination, location facets, and listing structure.
+- **Useful job records** — save job links, descriptions, first and last seen dates, and whether a role is still active.
+- **Background description enrichment** — fetch full job descriptions without holding up a scan.
+- **Telegram alerts** — send new matching roles to a chat, group, or channel. Failed messages remain queued for retry.
+- **Application tracking** — record status and personal notes beside each saved job.
+- **Export and backup options** — export jobs as CSV or JSON; optionally mirror the complete job history to Google Sheets.
+- **Maintenance signals** — recognizable portal structure changes show as scan issues in the dashboard and logs.
+- **Local-first storage** — SQLite is the source of truth; the dashboard listens on `127.0.0.1` by default.
+
+## Get started
+
+### 1. Install
 
 Python 3.10 or newer is required.
 
 ```bash
+git clone <repository-url>
+cd JobPortalScraper
 python3 -m venv .venv
-source .venv/bin/activate
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
 python -m pip install -e .
 ```
 
-After setup, start the dashboard from the project folder:
+### 2. Open the dashboard
 
 ```bash
 python start_dashboard.py
 ```
 
-It opens the dashboard in your browser. Leave this Terminal window running while you want monitoring. Choose **Quit dashboard** in the sidebar to stop it. Logs are written to `logs/job-scraper.log`.
+The dashboard opens in your browser at [http://127.0.0.1:8765](http://127.0.0.1:8765). Keep the terminal window open while monitoring. Add a company, optionally set filters, then choose **Start monitoring** or **Scan now**.
 
-The dashboard is available at [http://127.0.0.1:8765](http://127.0.0.1:8765) and is bound to this computer only. Use **Add a company** to manage career pages and optional role and location filters. On the overview, choose **Start monitoring** to run scans every 30 minutes, or use **Scan now** for a one-off check. The first scan silently records current listings; later scans alert Telegram for new matching jobs. Use **Settings** to enter your Telegram bot token and channel/chat ID, select an interval, and send a test message.
+The first successful scan creates a quiet baseline of current openings. Later scans alert on new matching roles. With no filters, every role qualifies. A configured keyword filter requires at least one keyword match; a configured location filter requires at least one location match.
 
-Open **Details** on a job to review its scraped description and link, track its application status, and save notes locally. Job descriptions are enriched in the background when a portal provides a full detail page. If Google Sheets is configured, job records and notes are also mirrored there. The Job matches page can export its current filtered view as CSV or JSON. Job details, tracking, filters, and exports are laid out for mobile screens; use the theme button in the top bar to switch between light and dark modes.
+### 3. Connect Telegram
 
-Company settings continue to be saved in `companies.json`; job and scan history remain in `jobs.sqlite3`. Telegram settings are saved locally in the git-ignored `settings.json`. If you already set Telegram environment variables, the dashboard can use those until you save settings in the UI.
+Create a bot with [@BotFather](https://t.me/BotFather), add it to the destination chat, and grant it permission to post. In **Settings**, enter both the bot token and the destination chat ID, save, then choose **Send a test**.
 
-### Google Sheets master mirror
+- Public channels can use their `@channelname`.
+- Private channels and groups use a numeric chat ID, often beginning with `-100`.
+- For a direct message, open the bot and press **Start** first.
 
-SQLite remains the source of truth. To keep a Google spreadsheet updated, create a Google service account, enable the Google Sheets API for its project, create a JSON key, and set `GOOGLE_SERVICE_ACCOUNT_FILE` to that key's local path in the project-root `.env`. The app loads `.env` on startup, and process environment values take precedence. The repository ignores `.env` and common service-account key filenames; storing the key outside the project is still preferable. Install the optional integration dependency with `python -m pip install -e ".[google]"`.
+The bot token is stored locally in the ignored `settings.json` file. The dashboard clears the password field after saving; its saved-token hint confirms the token is still configured. Keep this file private.
 
-Create a spreadsheet in your Drive, share it with the service account's `client_email` value as an Editor, then paste its URL or ID into **Settings → Google Sheets master spreadsheet**. The app creates a `Jobs` tab and keeps one row per job, including inactive history, full descriptions, first/last seen dates, alert/application status, and application notes. Sheets failures are retried from the local queue and do not stop scans. Descriptions are fetched one at a time in the background; saved description text is kept if a portal does not return a full JD.
+## Supported portals
 
-Optional browser fallback for career sites rendered by JavaScript:
+| Portal | Notes |
+| --- | --- |
+| **Addepar** | Embedded Greenhouse board; requests full description content. |
+| **BlackRock** | Paginated TalentBrew results with location matching and JD loading. |
+| **bp** | Algolia listings, location facets, and detail-page descriptions. |
+| **Citi** | TalentBrew search, location autocomplete, and job details. |
+| **FIS Global** | Phenom search results and city facets. |
+| **Greenhouse** | Public board API, including embedded company widgets. |
+| **Mastercard** | Phenom search results and location filtering. |
+| **State Street** | Phenom search results and location filtering. |
+| **UBS** | IBM BrassRing embedded search and location facets. |
+| **Workday** | `myworkdayjobs.com` and `myworkdaysite.com`, with location facets and canonical job links. |
+| **Other sites** | Generic structured job data and likely job links, with optional browser fallback. |
+
+Portals can change independently. When a supported adapter no longer recognizes a page, Career Radar reports an issue so it can be maintained. A valid page with no current openings is treated as a successful scan.
+
+## Configuration
+
+### Company filters and scan controls
+
+Use **Add a company** in the dashboard, or manage companies from the CLI:
+
+```bash
+job-scraper company add "Acme" "https://boards.greenhouse.io/acme" \
+  --keyword engineer --keyword analyst --location Pune
+job-scraper company list
+job-scraper company remove "Acme"
+```
+
+Repeat `--keyword` or `--location` to add alternatives. You can pause a company in the dashboard without deleting it; its saved jobs stay intact and queued alerts wait until it is included again.
+
+Run a one-time scan or continuous monitoring from the terminal:
+
+```bash
+job-scraper scan
+job-scraper run                  # scans immediately, then every 30 minutes
+job-scraper --interval 900 run   # every 15 minutes
+```
+
+### Optional JavaScript browser support
+
+Install this only when a portal requires browser-rendered results. State Street, FIS, and Mastercard use this fallback:
 
 ```bash
 python -m pip install -e ".[browser]"
 python -m playwright install chromium
 ```
 
-State Street, FIS, and Mastercard load their search listings with JavaScript, so this browser extra is needed for those integrations. BlackRock uses its static search pages when available and falls back to the browser if its listings are client-rendered. In the dashboard, enter a city in the company's **Locations** field and save it to fetch matching roles.
+### Optional Google Sheets mirror
 
-Create a Telegram bot with BotFather, add it to your channel or group, and grant permission to post. Set the bot token and destination ID before running the scraper:
+SQLite remains authoritative. The mirror updates a `Jobs` tab with saved jobs, full descriptions, inactive history, alert/application status, and notes.
 
-```bash
-export TELEGRAM_BOT_TOKEN="your_bot_token"
-export TELEGRAM_CHAT_ID="@your_channel_or_chat_id"
-```
+1. Create a Google service account and enable the Google Sheets API for its Cloud project.
+2. Create a JSON key and store it somewhere private. Do not commit it.
+3. Set the key path in a project-root `.env` file:
 
-For a private channel, use its numeric chat ID (often beginning with `-100`). Keep the bot token private. The dashboard and CLI load variables from the project-root `.env` file without replacing values already set in the process environment.
+   ```dotenv
+   GOOGLE_SERVICE_ACCOUNT_FILE=/path/to/private/service-account.json
+   ```
 
-## Add companies
+4. Install the optional dependency:
 
-```bash
-job-scraper company add "Acme" "https://boards.greenhouse.io/acme" --keyword engineer --location remote
-job-scraper company add "Example Corp" "https://example.wd5.myworkdayjobs.com/en-US/External"
-job-scraper company add "Northern Trust" "https://ntrs.wd1.myworkdayjobs.com/northerntrust/"
-job-scraper company add "Apex Group" "https://theapexgroup.wd3.myworkdayjobs.com/apexgroupcareers"
-job-scraper company add "SS&C Technologies" "https://wd1.myworkdaysite.com/en-US/recruiting/ssctech/SSCTechnologies" --location "Pune India - Commerzone Building 7"
-job-scraper company add "State Street" "https://careers.statestreet.com/global/en/" --location Pune
-job-scraper company add "UBS" "https://jobs.ubs.com/TGnewUI/Search/home/HomeWithPreLoad?partnerid=25008&siteid=5012&PageType=searchResults&SearchType=linkquery&LinkID=15602" --location Pune
-job-scraper company add "bp" "https://careers.bp.com/listing" --location Pune
-job-scraper company add "Citi" "https://jobs.citi.com/" --location Pune
-job-scraper company add "BlackRock" "https://careers.blackrock.com/" --location Mumbai
-job-scraper company list
-job-scraper company remove "Acme"
-```
+   ```bash
+   python -m pip install -e ".[google]"
+   ```
 
-Use `--keyword` and `--location` more than once to add alternatives. A job must match at least one configured keyword and at least one configured location. With no filters, all newly discovered jobs qualify. `company add` updates a company with the same name. The command stores company entries in `companies.json`; you can also edit this file directly:
+5. Create a spreadsheet in your Drive. Share it with the service account's `client_email` as an **Editor**, then paste the spreadsheet URL or ID into **Settings → Google Sheets master spreadsheet**.
 
-```json
-[
-  {
-    "name": "Acme",
-    "url": "https://boards.greenhouse.io/acme",
-    "keywords": ["engineer", "developer"],
-    "locations": ["remote", "New York"],
-    "enabled": true
-  }
-]
-```
+Sync runs in the background; Google errors do not stop scans and failed updates remain queued for retry. The app loads values from the project `.env` at startup. Environment variables already set by the process take precedence.
 
-Use the **Include in scans** checkbox when adding or editing a company to pause that portal. Excluded companies remain in the dashboard and their queued Telegram alerts wait until they are enabled again. Existing company entries default to enabled.
+### Local files
 
-The config file is loaded into the SQLite database when a command runs. The default database is `jobs.sqlite3`. Keep both files in a persistent directory and back them up if needed.
+| File | Purpose |
+| --- | --- |
+| `companies.json` | Company URLs, filters, and include/exclude settings. |
+| `jobs.sqlite3` | Job history, descriptions, application notes, and sync queue. |
+| `settings.json` | Dashboard preferences and locally saved Telegram settings. |
+| `logs/job-scraper.log` | Dashboard and scan logs. |
+| `.env` | Optional local environment variables; ignored by Git. |
 
-## Run
+Back up the files you want to keep. The Google Sheet is an optional mirror, not a replacement for the local database.
 
-Run a single scan to check setup:
+## Develop and test
 
-```bash
-job-scraper scan
-```
-
-Start continuous monitoring; it scans immediately and then every 30 minutes:
-
-```bash
-job-scraper run
-```
-
-Change the interval in seconds with `--interval` (for example, `--interval 900` for 15 minutes). Global options go before the command. Logs report scan and Telegram failures. Failed Telegram alerts remain pending and are retried on the next scan. The first successful scan records current jobs silently; subsequent scans alert only for new matching job URLs.
-
-## Portal support
-
-- Greenhouse URLs use the public boards API. Careers pages with an embedded Greenhouse widget are detected from the page and its site script, even when the company URL itself does not contain `greenhouse.io`.
-- Workday career-site URLs on `myworkdayjobs.com` and `myworkdaysite.com` use the site's public job search endpoint. Configured locations are resolved against Workday's location facets and applied server-side.
-- State Street's Phenom careers site is read from its public, paginated search-results pages. Configure a location such as `--location Pune` to send that city to the site's location search and keep matching city results. The scraper returns job titles, locations, descriptions, and links.
-- FIS Global's Phenom careers site is read from its public, paginated search-results pages. Configure a location such as `--location Pune` to select the matching City facet and keep matching city results.
-- Mastercard's Phenom careers site is read from its public, paginated search-results pages. Configure a location such as `--location Pune` to keep matching city results.
-- UBS's IBM BrassRing careers page is read from its embedded public search results. Configured locations such as `--location Pune` are applied through the portal's City facet.
-- bp's careers listing is read from its public Algolia search index. Results are paginated, configured locations are applied with the portal's location facets, and full descriptions load from bp's job detail pages.
-- Citi's TalentBrew careers site uses its public paginated search endpoint. Configured locations use Citi's location autocomplete and return only matching city listings; full descriptions load from the job detail page.
-- BlackRock's TalentBrew careers site is read from its paginated search pages. Configured locations are matched against each listing's primary location.
-- Other pages are parsed for JobPosting structured data and likely job links. If no static listings are found, installing the optional browser extra enables a Chromium fallback.
-
-Career pages vary and may change their layout or block automated requests. Supported portals report an issue when their expected listing structure is missing; a valid empty result remains a successful scan. Polling every 30 minutes is the default; respect each site's terms and request limits.
-
-### Adding portal support
-
-Add a provider adapter module under `job_scraper/portals/`, register its host and handler in `job_scraper/portals/registry.py`, and mix its adapter into `PortalScraper`. The Phenom, Workday, Greenhouse, UBS, bp, and Citi adapters show this pattern. Add saved HTML or JSON fixtures and mocked request/browser tests for routing, parsing, locations, pagination, and valid empty results. Raise `PortalStructureError` when a supported portal no longer exposes its expected listing structure; scan errors are shown in the dashboard and log. Keep tests independent of live sites. The GitHub Actions test workflow runs the suite on pushes and pull requests.
-
-## Tests
+Install the development tools and run the offline regression suite:
 
 ```bash
 python -m pip install -e ".[dev]"
-python -m pytest
+python -m pytest                       # full suite
+python -m pytest tests/test_scrapers.py # one test module
+python -m pytest tests/test_scrapers.py -k workday  # selected tests
 ```
+
+Portal tests use saved fixtures and mocked responses; they do not need live career sites. The GitHub Actions workflow runs the suite on pushes and pull requests.
+
+### Add a portal adapter
+
+1. Add an adapter module under `job_scraper/portals/`.
+2. Register its hostname and handler in `job_scraper/portals/registry.py`.
+3. Add offline fixtures and tests for routing, listing parsing, locations, pagination, empty results, and structure changes. Add JD coverage when the portal has a separate detail source.
+4. Raise `PortalStructureError` when the expected listing structure disappears; return an empty list for a valid empty result.
+
+Keep the public `PortalScraper.fetch(url, locations)` entry point stable so one portal's changes stay isolated from the others.
+
+## Troubleshooting
+
+- **A company shows an issue:** check its latest error in the dashboard and `logs/job-scraper.log`. Portal markup or an API response may have changed.
+- **No Telegram message:** verify both credentials, add the bot to the destination, and use **Send a test** to see Telegram's response.
+- **Google Sheets returns 403:** share the spreadsheet with the service account as an Editor and check that the Sheets API is enabled.
+- **A portal shows zero jobs:** confirm the company URL and location filters. An incorrect location label can exclude otherwise valid roles.
+- **Monitoring stops when you close Terminal:** the local dashboard runs in that process. Relaunch it with `python start_dashboard.py`.
+
+## License
+
+No license file is currently included. Add a `LICENSE` file before distributing or accepting external contributions.
