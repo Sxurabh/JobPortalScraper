@@ -73,6 +73,39 @@ Create a bot with [@BotFather](https://t.me/BotFather), add it to the destinatio
 
 The bot token is stored locally in the ignored `settings.json` file. The dashboard clears the password field after saving; its saved-token hint confirms the token is still configured. Keep this file private.
 
+## Connect an AI agent
+
+Career Radar includes a local [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server. MCP-compatible agents can use it to read job data and operate the dashboard. The dashboard must be running on the same computer; the MCP server only connects to `127.0.0.1` (default port `8765`). Start it with `python start_dashboard.py` before connecting an agent. Set `JOB_SCRAPER_PORT` for both processes if you use a different dashboard port.
+
+After installing Career Radar with `python -m pip install -e .`, configure your MCP host to launch `job-scraper-mcp` over stdio. For example, an OpenClaw server entry is:
+
+```json
+{
+  "mcp": {
+    "servers": {
+      "career-radar": {
+        "command": "job-scraper-mcp"
+      }
+    }
+  }
+}
+```
+
+For Hermes Agent, add this server under `mcp_servers` in `~/.hermes/config.yaml`:
+
+```yaml
+mcp_servers:
+  career-radar:
+    command: job-scraper-mcp
+    args: []
+```
+
+Agent configuration formats can vary by version. If the executable is not on the agent's `PATH`, use its absolute path (find it with `which job-scraper-mcp`) or invoke it through the Python environment where Career Radar was installed.
+
+The MCP server exposes tools to read status, jobs, companies, and settings; add or edit and remove companies; control monitoring and scans; update application tracking and dashboard settings; test Telegram; and stop the dashboard. Company removal deletes that company's stored jobs. Dashboard settings can include Telegram credentials, though settings reads never return saved tokens. Only connect trusted local agents, and enable only the tools you need in the agent's own tool policy.
+
+Agents without MCP support can call the dashboard's local JSON API directly at `http://127.0.0.1:8765/api`. Useful endpoints include `GET /api/status`, `GET /api/jobs?scope=all`, `GET /api/companies`, `POST /api/companies`, `POST /api/companies/remove`, `POST /api/control/scan`, `PATCH /api/jobs/tracking`, and `POST /api/settings`. API calls are local and unauthenticated; do not expose the dashboard port to a network.
+
 ## Supported portals
 
 | Portal | Notes |

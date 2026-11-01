@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Monitor company career portals and send new-job alerts to Telegram."
 readme = "README.md"
 requires-python = ">=3.10"
-dependencies = ["requests>=2.31,<3", "beautifulsoup4>=4.12,<5", "Flask>=3.0,<4"]
+dependencies = ["requests>=2.31,<3", "beautifulsoup4>=4.12,<5", "Flask>=3.0,<4", "mcp>=1.9,<2"]
 
 [project.optional-dependencies]
 browser = ["playwright>=1.45,<2"]
@@ -18,6 +18,7 @@ google = ["google-auth>=2.29,<3"]
 [project.scripts]
 job-scraper = "job_scraper.cli:main"
 job-scraper-dashboard = "job_scraper.desktop:main"
+job-scraper-mcp = "job_scraper.mcp_server:main"
 
 [tool.setuptools.packages.find]
 include = ["job_scraper*"]
