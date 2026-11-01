@@ -361,10 +361,36 @@
   }
 
   function companyStatus(company) {
+    const status = companyStatusText(company);
+    const title = company.last_scan_status === "error" ? ` title="${escapeHtml(companyHealthTooltip(company))}"` : "";
+    return `<span class="health-indicator${company.last_scan_status === "error" ? " error" : ""}"${title}><i></i>${status}</span>`;
+  }
+
+  function companyStatusText(company) {
     const failed = company.last_scan_status === "error";
-    const status = company.enabled === 0 || company.enabled === false ? "Paused" : failed ? "Issue" : company.last_scanned_at ? `${Number(company.last_job_count) || 0} roles` : "Waiting";
-    const title = failed ? ` title="${escapeHtml(company.last_scan_error || "Portal scan failed")}"` : "";
-    return `<span class="health-indicator${failed ? " error" : ""}"${title}><i></i>${status}</span>`;
+    const categoryLabels = {
+      transient_network: "Connection issue",
+      browser_runtime: "Browser interrupted",
+      structure_changed: "Portal changed",
+      remote_rejected: "Portal rejected request",
+      unknown: "Unexpected error",
+    };
+    const category = categoryLabels[company.last_scan_error_type] || "Scan issue";
+    const failureStreak = Number(company.scan_failure_streak) || 0;
+    const status = company.enabled === 0 || company.enabled === false ? "Paused"
+      : failed ? `${category} · ${failureStreak} ${failureStreak === 1 ? "failure" : "failures"}`
+        : company.last_successful_scan_at ? `${Number(company.last_job_count) || 0} roles` : "Waiting";
+    return status;
+  }
+
+  function companyHealthTooltip(company) {
+    const details = [company.last_scan_error || "Portal scan failed"];
+    if (company.scan_failure_streak) details.push(`${company.scan_failure_streak} consecutive failures`);
+    details.push(company.last_successful_scan_at
+      ? `Last successful scan ${relativeTime(company.last_successful_scan_at)}`
+      : "No successful scan recorded");
+    if (company.next_scan_retry_at) details.push(`Retry after ${formatDate(company.next_scan_retry_at)}`);
+    return details.join(" · ");
   }
 
   function renderCompanies() {
@@ -382,6 +408,21 @@
       const filters = [...keywords.map((item) => `Role · ${item}`), ...locations.map((item) => `Place · ${item}`)];
       return `<article class="company-card${company.enabled ? "" : " company-disabled"}"><div class="company-card-top"><input class="company-scan-toggle" type="checkbox" data-name="${escapeHtml(company.name)}" ${company.enabled ? "checked" : ""} aria-label="Include ${escapeHtml(company.name)} in live scans" title="${company.enabled ? "Included in live scans" : "Excluded from live scans"}">${companyLogo(company.name)}<div class="company-card-heading"><h3>${escapeHtml(company.name)}</h3><a class="company-url" href="${escapeHtml(safeHref(company.url))}" title="${escapeHtml(company.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(company.url)}</a></div><div class="company-menu"><button class="icon-text-button edit-company" data-name="${escapeHtml(company.name)}" title="Edit company" aria-label="Edit ${escapeHtml(company.name)}">${icon.edit}</button><button class="icon-text-button delete-company" data-name="${escapeHtml(company.name)}" title="Remove company" aria-label="Remove ${escapeHtml(company.name)}">${icon.trash}</button></div></div><div class="company-card-tags">${filters.length ? filters.map((filter) => `<span class="filter-tag">${escapeHtml(filter)}</span>`).join("") : '<span class="filter-tag">All new roles</span>'}</div><div class="company-card-footer"><span class="company-status${company.last_scan_status === "error" ? " error" : ""}" title="${escapeHtml(company.last_scan_error || "")}"><i></i>${!company.enabled ? "Excluded from scans" : company.last_scan_status === "error" ? "Needs attention" : company.last_scanned_at ? `${Number(company.last_job_count) || 0} current openings` : "First scan pending"}</span><span>${company.last_scanned_at ? `Checked ${escapeHtml(relativeTime(company.last_scanned_at))}` : "Not checked yet"}</span></div></article>`;
     }).join("");
+    $$(".company-status", grid).forEach((indicator) => {
+      const name = indicator.closest(".company-card")?.querySelector(".company-scan-toggle")?.dataset.name;
+      const company = state.companies.find((item) => item.name === name);
+      if (!company || company.last_scan_status !== "error") return;
+      indicator.innerHTML = `<i></i>${escapeHtml(companyStatusText(company))}`;
+      indicator.title = companyHealthTooltip(company);
+      const detail = indicator.parentElement.querySelector("span:last-child");
+      if (detail) {
+        const lastGood = company.last_successful_scan_at
+          ? `Last good ${relativeTime(company.last_successful_scan_at)}`
+          : "No successful scan yet";
+        detail.textContent = `${lastGood}${company.next_scan_retry_at ? ` · retry ${formatDate(company.next_scan_retry_at)}` : ""}`;
+        detail.title = `Last attempt: ${company.last_scanned_at || "Never"}`;
+      }
+    });
     activateCompanyLogos(grid);
     bindCompanyScanToggles(grid);
     $$(".edit-company", grid).forEach((button) => button.addEventListener("click", () => openCompanyModal(state.companies.find((company) => company.name === button.dataset.name))));

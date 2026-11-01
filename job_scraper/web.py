@@ -56,10 +56,12 @@ class MonitorController:
 
     def _loop(self):
         while True:
+            force_scan = False
             with self.condition:
                 while not self.shutdown:
                     if self.scan_requested:
                         self.scan_requested = False
+                        force_scan = True
                         break
                     if self.monitoring:
                         if self.next_due_monotonic is None:
@@ -78,7 +80,7 @@ class MonitorController:
                 self.last_scan_started = _utc_now()
                 self.next_scan_at = None
             try:
-                self.service.scan_once(on_progress=self._update_scan_progress)
+                self.service.scan_once(on_progress=self._update_scan_progress, force=force_scan)
             except Exception:
                 LOG.exception("Unexpected scan failure")
             finally:

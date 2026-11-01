@@ -27,8 +27,12 @@ class Storage:
                 enabled INTEGER NOT NULL DEFAULT 1,
                 baseline_done INTEGER NOT NULL DEFAULT 0,
                 last_scanned_at TEXT,
+                last_successful_scan_at TEXT,
                 last_scan_status TEXT NOT NULL DEFAULT 'waiting',
                 last_scan_error TEXT,
+                last_scan_error_type TEXT,
+                scan_failure_streak INTEGER NOT NULL DEFAULT 0,
+                next_scan_retry_at TEXT,
                 last_job_count INTEGER NOT NULL DEFAULT 0
             );
             CREATE TABLE IF NOT EXISTS jobs (
@@ -82,8 +86,12 @@ class Storage:
         for column, declaration in {
             "enabled": "INTEGER NOT NULL DEFAULT 1",
             "last_scanned_at": "TEXT",
+            "last_successful_scan_at": "TEXT",
             "last_scan_status": "TEXT NOT NULL DEFAULT 'waiting'",
             "last_scan_error": "TEXT",
+            "last_scan_error_type": "TEXT",
+            "scan_failure_streak": "INTEGER NOT NULL DEFAULT 0",
+            "next_scan_retry_at": "TEXT",
             "last_job_count": "INTEGER NOT NULL DEFAULT 0",
         }.items():
             if column not in company_columns:
@@ -119,6 +127,20 @@ class Storage:
         self.db.execute(
             "UPDATE jobs SET description_status=CASE WHEN description<>'' THEN 'listing' ELSE 'pending' END "
             "WHERE description_status='pending' AND description<>''"
+        )
+        self.db.execute(
+            "UPDATE companies SET last_successful_scan_at=last_scanned_at "
+            "WHERE last_successful_scan_at IS NULL AND last_scan_status='ok'"
+        )
+        self.db.execute(
+            "UPDATE companies SET last_successful_scan_at=("
+            "SELECT MAX(NULLIF(j.last_seen_at,'')) FROM jobs j WHERE j.company_name=companies.name) "
+            "WHERE last_successful_scan_at IS NULL AND EXISTS ("
+            "SELECT 1 FROM jobs j WHERE j.company_name=companies.name)"
+        )
+        self.db.execute(
+            "UPDATE companies SET scan_failure_streak=1 "
+            "WHERE last_scan_status='error' AND scan_failure_streak=0"
         )
         self.db.execute("CREATE INDEX IF NOT EXISTS jobs_company_active_idx ON jobs(company_name,is_active)")
         self.db.execute("CREATE INDEX IF NOT EXISTS jobs_enrichment_idx ON jobs(description_status,description_retry_at,description_priority)")
@@ -309,13 +331,16 @@ class Storage:
         with self.lock, self.db:
             self.db.execute("UPDATE jobs SET notification_status='sent' WHERE company_name=? AND url=?", (company_name, url))
 
-    def record_scan(self, name: str, status: str, job_count: int = 0, error: str | None = None, seen_urls=()):
+    def record_scan(self, name: str, status: str, job_count: int = 0, error: str | None = None,
+                    seen_urls=(), error_type: str | None = None, retry_after_seconds: int | None = None):
         with self.lock, self.db:
-            self.db.execute(
-                "UPDATE companies SET last_scanned_at=CURRENT_TIMESTAMP,last_scan_status=?,last_scan_error=?,last_job_count=? WHERE name=? COLLATE NOCASE",
-                (status, error, job_count, name),
-            )
             if status == "ok":
+                self.db.execute(
+                    "UPDATE companies SET last_scanned_at=CURRENT_TIMESTAMP,last_successful_scan_at=CURRENT_TIMESTAMP,"
+                    "last_scan_status='ok',last_scan_error=NULL,last_scan_error_type=NULL,scan_failure_streak=0,"
+                    "next_scan_retry_at=NULL,last_job_count=? WHERE name=? COLLATE NOCASE",
+                    (job_count, name),
+                )
                 seen = set(seen_urls)
                 for url in seen:
                     self.db.execute(
@@ -337,6 +362,31 @@ class Storage:
                         (name, row["url"]),
                     )
                     self._queue_sheet_sync(name, row["url"])
+            else:
+                retry_at = None
+                if retry_after_seconds is not None:
+                    retry_at = (datetime.now(timezone.utc) + timedelta(seconds=max(0, retry_after_seconds))).isoformat(timespec="seconds")
+                self.db.execute(
+                    "UPDATE companies SET last_scanned_at=CURRENT_TIMESTAMP,last_scan_status='error',last_scan_error=?,"
+                    "last_scan_error_type=?,scan_failure_streak=scan_failure_streak+1,next_scan_retry_at=? "
+                    "WHERE name=? COLLATE NOCASE",
+                    (error, error_type or "unknown", retry_at, name),
+                )
+
+    def scan_failure_streak(self, name: str) -> int:
+        with self.lock:
+            row = self.db.execute(
+                "SELECT scan_failure_streak FROM companies WHERE name=? COLLATE NOCASE", (name,)
+            ).fetchone()
+            return int(row[0]) if row else 0
+
+    def company_scan_deferred(self, name: str) -> bool:
+        with self.lock:
+            row = self.db.execute(
+                "SELECT next_scan_retry_at IS NOT NULL AND julianday(next_scan_retry_at)>julianday('now') "
+                "FROM companies WHERE name=? COLLATE NOCASE", (name,)
+            ).fetchone()
+            return bool(row and row[0])
 
     def all_job_rows(self):
         with self.lock:
@@ -500,7 +550,9 @@ class Storage:
     def company_health(self) -> list[dict]:
         with self.lock:
             rows = self.db.execute(
-                "SELECT name,url,keywords,locations,enabled,last_scanned_at,last_scan_status,last_scan_error,last_job_count,baseline_done FROM companies ORDER BY name COLLATE NOCASE"
+                "SELECT name,url,keywords,locations,enabled,last_scanned_at,last_successful_scan_at,last_scan_status,"
+                "last_scan_error,last_scan_error_type,scan_failure_streak,next_scan_retry_at,last_job_count,baseline_done "
+                "FROM companies ORDER BY name COLLATE NOCASE"
             ).fetchall()
             companies = [dict(row) for row in rows]
             for company in companies:

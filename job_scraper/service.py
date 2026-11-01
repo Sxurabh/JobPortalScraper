@@ -5,6 +5,7 @@ import time
 
 from .notifier import TelegramNotifier
 from .models import Job
+from .portals.errors import classify_scan_error, scan_retry_delay_seconds
 from .scrapers import PortalScraper
 from .storage import Storage
 from .google_sheets import GoogleSheetsMirror
@@ -22,7 +23,7 @@ class JobService:
         self._worker_stop = threading.Event()
         self._worker_threads = []
 
-    def scan_once(self, on_progress=None):
+    def scan_once(self, on_progress=None, *, force=False):
         companies = [company for company in self.storage.companies() if company.enabled]
         total = len(companies)
         if on_progress:
@@ -32,6 +33,11 @@ class JobService:
         for index, company in enumerate(companies, start=1):
             if on_progress:
                 on_progress(index - 1, total, company.name)
+            if not force and self.storage.company_scan_deferred(company.name):
+                LOG.info("Deferring %s until its scheduled retry", company.name)
+                if on_progress:
+                    on_progress(index, total, company.name)
+                continue
             try:
                 fetch_company = getattr(self.scraper, "fetch_company", None)
                 jobs = fetch_company(company) if fetch_company else self.scraper.fetch(company.url)
@@ -48,8 +54,21 @@ class JobService:
                     LOG.info("Scanned %s and found %d listings", company.name, len(jobs))
                 self.storage.record_scan(company.name, "ok", len(jobs), seen_urls=[job.url for job in jobs])
             except Exception as exc:
-                self.storage.record_scan(company.name, "error", 0, str(exc))
-                LOG.exception("Scan failed for %s (%s)", company.name, company.url)
+                error_type = classify_scan_error(exc)
+                failure_streak = self.storage.scan_failure_streak(company.name) + 1
+                retry_delay = scan_retry_delay_seconds(error_type, failure_streak)
+                self.storage.record_scan(
+                    company.name,
+                    "error",
+                    0,
+                    str(exc),
+                    error_type=error_type,
+                    retry_after_seconds=retry_delay,
+                )
+                LOG.exception(
+                    "Scan failed for %s (%s); category=%s retry_in=%ss",
+                    company.name, company.url, error_type, retry_delay,
+                )
             finally:
                 if on_progress:
                     on_progress(index, total, company.name)

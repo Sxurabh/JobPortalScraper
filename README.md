@@ -37,6 +37,7 @@ flowchart LR
 - **Application tracking** — record status and personal notes beside each saved job.
 - **Export and backup options** — export jobs as CSV or JSON; optionally mirror the complete job history to Google Sheets.
 - **Maintenance signals** — recognizable portal structure changes show as scan issues in the dashboard and logs.
+- **Failure-safe monitoring** — transient portal failures are categorized and retried with per-company backoff; one portal does not hold up the rest.
 - **Local-first storage** — SQLite is the source of truth; the dashboard listens on `127.0.0.1` by default.
 
 ## Get started
@@ -217,6 +218,7 @@ Keep the public `PortalScraper.fetch(url, locations)` entry point stable so one 
 ## Troubleshooting
 
 - **A company shows an issue:** check its latest error in the dashboard and `logs/job-scraper.log`. Portal markup or an API response may have changed.
+- **A company is waiting for retry:** scheduled scans back off failed portals. Choose **Scan now** to force an immediate retry; its last successful scan and saved jobs remain available while it recovers.
 - **No Telegram message:** verify both credentials, add the bot to the destination, and use **Send a test** to see Telegram's response.
 - **Google Sheets returns 403:** share the spreadsheet with the service account as an Editor and check that the Sheets API is enabled.
 - **A portal shows zero jobs:** confirm the company URL and location filters. An incorrect location label can exclude otherwise valid roles.

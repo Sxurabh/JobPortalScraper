@@ -1,4 +1,5 @@
 from job_scraper.models import Company, Job
+from job_scraper.portals.errors import classify_scan_error, scan_retry_delay_seconds
 from job_scraper.portals.errors import PortalStructureError
 from job_scraper.service import JobService
 from job_scraper.storage import Storage
@@ -101,6 +102,56 @@ def test_portal_failure_does_not_block_other_companies(tmp_path):
     assert health["Broken"]["last_scan_status"] == "error"
     assert "may need maintenance" in health["Broken"]["last_scan_error"]
     store.close()
+
+
+def test_transient_portal_failure_is_deferred_and_manual_scan_forces_retry(tmp_path):
+    class FlakyScraper:
+        def __init__(self):
+            self.calls = 0
+
+        def fetch(self, url, locations=None):
+            self.calls += 1
+            if self.calls == 1:
+                raise TimeoutError("career portal request timed out")
+            return [Job("Engineer", "https://jobs.test/engineer", "Remote")]
+
+    store = Storage(tmp_path / "jobs.sqlite3")
+    store.upsert_company(Company("Flaky", "https://careers.example.test"))
+    scraper = FlakyScraper()
+    service = JobService(store, scraper)
+
+    service.scan_once()
+    failed = store.company_health()[0]
+    assert failed["last_scan_error_type"] == "transient_network"
+    assert failed["scan_failure_streak"] == 1
+    assert failed["next_scan_retry_at"]
+    assert store.company_scan_deferred("Flaky") is True
+
+    service.scan_once()
+    assert scraper.calls == 1
+
+    service.scan_once(force=True)
+    recovered = store.company_health()[0]
+    assert scraper.calls == 2
+    assert recovered["last_scan_status"] == "ok"
+    assert recovered["last_scan_error_type"] is None
+    assert recovered["scan_failure_streak"] == 0
+    assert recovered["next_scan_retry_at"] is None
+    assert recovered["last_successful_scan_at"]
+    store.close()
+
+
+def test_scan_error_categories_and_retry_delays_are_bounded():
+    assert classify_scan_error(TimeoutError("read timed out")) == "transient_network"
+    assert classify_scan_error(PortalStructureError("job card structure changed")) == "structure_changed"
+
+    class TargetClosedError(Exception):
+        pass
+
+    assert classify_scan_error(TargetClosedError("browser closed")) == "browser_runtime"
+    assert scan_retry_delay_seconds("transient_network", 1) == 600
+    assert scan_retry_delay_seconds("transient_network", 20) == 6 * 60 * 60
+    assert scan_retry_delay_seconds("structure_changed", 1) == 6 * 60 * 60
 
 
 def test_excluded_company_is_not_scanned_and_queued_alert_waits_until_reenabled(tmp_path):

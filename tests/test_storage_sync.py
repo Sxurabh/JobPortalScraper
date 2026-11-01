@@ -43,6 +43,7 @@ def test_legacy_database_migration_preserves_job_and_tracking_data(tmp_path):
     assert job["first_seen_at"] == "2025-02-03 04:05:06"
     assert job["last_seen_at"] == "2025-02-03 04:05:06"
     assert job["is_active"] is True
+    assert storage.company_health()[0]["last_successful_scan_at"] == "2025-02-03 04:05:06"
     storage.close()
 
 

@@ -82,7 +82,7 @@ def main(argv=None):
             return 0
         service = JobService(storage)
         if args.command == "scan":
-            service.scan_once()
+            service.scan_once(force=True)
         else:
             if args.interval < 1:
                 raise ValueError("Interval must be at least one second")

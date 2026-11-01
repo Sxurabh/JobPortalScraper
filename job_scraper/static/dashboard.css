@@ -222,7 +222,7 @@ h1 { margin: 11px 0 7px; font-size: clamp(31px, 3.35vw, 43px); line-height: 1.13
 .icon-text-button:hover { color: #ad655d; background: #fff8f6; border-color: #f1ded9; }
 .company-card-tags { display: flex; flex-wrap: wrap; gap: 6px; min-height: 20px; margin: 15px 0 13px; }
 .filter-tag { padding: 5px 7px; color: #62806a; background: #f0f5ef; border-radius: 6px; font-size: 8px; }
-.company-card-footer { display: flex; align-items: center; justify-content: space-between; padding-top: 11px; border-top: 1px solid #f0f2ef; color: #96a099; font-size: 8px; }
+.company-card-footer { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 6px 10px; padding-top: 11px; border-top: 1px solid #f0f2ef; color: #96a099; font-size: 8px; }
 .company-status { display: flex; align-items: center; gap: 5px; }
 .company-status i { width: 5px; height: 5px; background: #84af8e; border-radius: 50%; }
 .company-status.error { color: #ad766b; }
