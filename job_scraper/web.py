@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import re
+import sys
 import threading
 import time
 from datetime import datetime, timezone
@@ -17,6 +18,7 @@ from .env import load_project_env
 from .notifier import TelegramNotifier
 from .service import JobService
 from .storage import Storage
+from .terminal_ui import run_terminal_dashboard
 
 LOG = logging.getLogger(__name__)
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -462,9 +464,37 @@ def main():
     LOG.info("Starting local dashboard at http://127.0.0.1:%s", port)
     server = make_server("127.0.0.1", port, app, threaded=True)
     app.config["HTTP_SERVER"] = server
+    terminal_stop = threading.Event()
+    terminal_thread = None
+    if sys.stdout.isatty():
+        def terminal_snapshot():
+            state = app.config["CONTROLLER"].snapshot()
+            companies = app.config["STORAGE"].company_health()
+            state.update(app.config["STORAGE"].dashboard_counts())
+            state["companies_detail"] = companies
+            if not state["last_scan_finished"]:
+                state["last_scan_finished"] = max(
+                    (item["last_scanned_at"] for item in companies if item["last_scanned_at"]),
+                    default=None,
+                )
+            state["interval_minutes"] = state["interval_seconds"] // 60
+            jobs = app.config["STORAGE"].recent_jobs(limit=5, scope="matching")
+            return state, jobs
+
+        terminal_thread = threading.Thread(
+            target=run_terminal_dashboard,
+            args=(terminal_snapshot, f"http://127.0.0.1:{port}"),
+            kwargs={"stop_event": terminal_stop},
+            name="job-scraper-terminal-dashboard",
+            daemon=True,
+        )
+        terminal_thread.start()
     try:
         server.serve_forever()
     finally:
+        terminal_stop.set()
+        if terminal_thread and terminal_thread.is_alive():
+            terminal_thread.join(timeout=3)
         app.config["CONTROLLER"].close()
         app.config["STORAGE"].close()
 

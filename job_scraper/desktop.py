@@ -3,11 +3,13 @@
 import logging
 import os
 import socket
+import sys
 import webbrowser
 from pathlib import Path
 from threading import Timer
 
 from .web import main as serve_dashboard
+from .terminal_ui import fetch_dashboard_snapshot, run_terminal_dashboard
 
 
 def main():
@@ -17,6 +19,12 @@ def main():
     try:
         with socket.create_connection(address, timeout=0.4):
             webbrowser.open(url)
+            if sys.stdout.isatty():
+                run_terminal_dashboard(
+                    lambda: fetch_dashboard_snapshot(url),
+                    url,
+                    owner=False,
+                )
             return
     except OSError:
         pass

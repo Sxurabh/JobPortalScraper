@@ -61,6 +61,8 @@ python start_dashboard.py
 
 The dashboard opens in your browser at [http://127.0.0.1:8765](http://127.0.0.1:8765). Keep the terminal window open while monitoring. Add a company, optionally set filters, then choose **Start monitoring** or **Scan now**.
 
+When started from an interactive terminal, Career Radar also shows a live terminal dashboard with a text logo, scan progress, job counts, recent matches, and portal issues. Use **S** to start monitoring, **P** to pause, **R** to scan now, **O** to open the browser, and **Q** to quit. **Ctrl+C** also stops the dashboard. If it is already running in another terminal, a new launch attaches a live view; **Q** closes only that view.
+
 The first successful scan creates a quiet baseline of current openings. Later scans alert on new matching roles. With no filters, every role qualifies. A configured keyword filter requires at least one keyword match; a configured location filter requires at least one location match.
 
 ### 3. Connect Telegram
