@@ -1,0 +1,56 @@
+name: Daily job scan
+
+on:
+  schedule:
+    # 08:15 Asia/Kolkata (02:45 UTC), away from the top of the hour.
+    - cron: "45 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install scraper and browser support
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[browser]"
+          python -m playwright install --with-deps chromium
+
+      - name: Load company watchlist
+        env:
+          COMPANIES_JSON: ${{ secrets.COMPANIES_JSON }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          raw = os.environ.get("COMPANIES_JSON", "").strip()
+          if not raw:
+              raise SystemExit(
+                  "Add a COMPANIES_JSON Actions secret containing your companies.json contents."
+              )
+          companies = json.loads(raw)
+          if not isinstance(companies, list) or not companies:
+              raise SystemExit("COMPANIES_JSON must be a non-empty JSON array.")
+          Path("companies.json").write_text(json.dumps(companies), encoding="utf-8")
+          print(f"Loaded {len(companies)} companies from the Actions secret.")
+          PY
+
+      - name: Run one scan
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: job-scraper scan
