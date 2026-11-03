@@ -1,4 +1,5 @@
 name: Daily job scan
+run-name: "Career Radar scan #${{ github.run_number }} (${{ github.event_name }})"
 
 on:
   schedule:
@@ -10,9 +11,15 @@ permissions:
   contents: read
 
 jobs:
-  scan:
+  scan-and-sync:
+    name: "Validate, scan portals, and sync Google Sheets"
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
+    env:
+      GOOGLE_SPREADSHEET_ID: ${{ secrets.GOOGLE_SPREADSHEET_ID }}
+    concurrency:
+      group: github-sheets-scan
+      cancel-in-progress: false
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -25,7 +32,7 @@ jobs:
       - name: Install scraper and browser support
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e ".[browser]"
+          python -m pip install -e ".[browser,google]"
           python -m playwright install --with-deps chromium
 
       - name: Load company watchlist
@@ -49,8 +56,37 @@ jobs:
           print(f"Loaded {len(companies)} companies from the Actions secret.")
           PY
 
-      - name: Run one scan
+      - name: Configure Google Sheets credentials
+        env:
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          raw = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON", "").strip()
+          if not raw:
+              raise SystemExit("Add a GOOGLE_SERVICE_ACCOUNT_JSON Actions secret.")
+          credentials = json.loads(raw)
+          if not isinstance(credentials, dict) or not credentials.get("client_email") or not credentials.get("private_key"):
+              raise SystemExit("GOOGLE_SERVICE_ACCOUNT_JSON must contain a service-account key.")
+          path = Path(os.environ["RUNNER_TEMP"]) / "google-service-account.json"
+          path.write_text(json.dumps(credentials), encoding="utf-8")
+          path.chmod(0o600)
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env_file:
+              env_file.write(f"GOOGLE_SERVICE_ACCOUNT_FILE={path}\n")
+          PY
+
+      - name: Verify Google Sheets access and tabs
+        run: job-scraper-github-scan --check
+
+      - name: Scan portals and save job history
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: job-scraper scan
+        run: job-scraper-github-scan --max-enrichment-seconds 900
+
+      - name: Remove temporary credentials
+        if: always()
+        run: rm -f "$RUNNER_TEMP/google-service-account.json"

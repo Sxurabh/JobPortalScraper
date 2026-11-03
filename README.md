@@ -129,6 +129,24 @@ Portals can change independently. When a supported adapter no longer recognizes 
 
 ## Configuration
 
+### Daily GitHub Actions scan
+
+The scheduled workflow runs once daily at 08:15 India time and can also be started manually from the repository's **Actions** tab. It keeps its scan history in two tabs in the configured spreadsheet: **GitHub Jobs** and **GitHub State**. The workflow creates these tabs and their headers if they are missing. It does not read or change the local app's SQLite database or the existing **Jobs** mirror tab.
+
+Add these repository secrets under **Settings → Secrets and variables → Actions**:
+
+| Secret | Value |
+| --- | --- |
+| `COMPANIES_JSON` | The complete contents of your `companies.json` watchlist. |
+| `GOOGLE_SPREADSHEET_ID` | The spreadsheet ID (the text between `/d/` and `/edit` in its URL). |
+| `GOOGLE_SERVICE_ACCOUNT_JSON` | The complete JSON key downloaded for your Google service account. |
+| `TELEGRAM_BOT_TOKEN` | Telegram bot token; needed to deliver new-job alerts. |
+| `TELEGRAM_CHAT_ID` | Telegram destination chat ID; needed to deliver new-job alerts. |
+
+Enable the Google Sheets API in the service account's Cloud project, then share the spreadsheet with the service account's `client_email` as an **Editor**. Keep the credential JSON in GitHub Secrets; do not commit it to the repository.
+
+The first GitHub Actions scan records current listings as a baseline, so it does not alert on every already-open role. Later scans update rows by the scraper's stable job key and append newly discovered jobs. Removing a company from `COMPANIES_JSON` pauses its future scans while keeping its saved rows in the GitHub tabs. These tabs are separate from the local dashboard's SQLite-backed job history.
+
 ### Company filters and scan controls
 
 Use **Add a company** in the dashboard, or manage companies from the CLI:
